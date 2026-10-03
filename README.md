@@ -141,11 +141,21 @@ openssl rand -hex 32   # WEBHOOK_SECRET
 ### 4. Deploy
 
 ```bash
-npm i -g vercel
-vercel
-vercel env add APIFY_TOKEN production      # repeat for each var
-vercel --prod
+npx vercel login
+npx vercel link            # pick the existing reel-radar project
+npm run push-env           # pipes the secrets from .env into Vercel
+npx vercel --prod
 ```
+
+`npm run push-env` reads `.env` and feeds each secret to the Vercel CLI over
+stdin, so values are never printed or logged. Re-running it is safe. The
+non-secret tuning variables can be set the same way or left to the defaults in
+`src/lib/config.ts`.
+
+Note that Vercel enables **SSO protection** on new projects, which blocks
+Apify's webhook and the external cron from reaching the app. Turn it off under
+Settings -> Deployment Protection, but only *after* `DASHBOARD_PASSWORD` is set,
+since the in-app password gate is what replaces it.
 
 Set `APP_BASE_URL` to your production URL. **Apify calls back to it**, so it
 must be publicly reachable — this is the one variable that cannot point at

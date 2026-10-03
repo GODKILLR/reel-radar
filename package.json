@@ -13,7 +13,8 @@
     "poll:local": "node --env-file=.env --import tsx scripts/poll-local.ts",
     "actorcheck": "node --import tsx scripts/actorcheck.ts",
     "check": "npm run authcheck && npm run actorcheck && npm run sqlcheck",
-    "authcheck": "node --import tsx scripts/authcheck.ts"
+    "authcheck": "node --import tsx scripts/authcheck.ts",
+    "push-env": "node scripts/push-env.mjs"
   },
   "dependencies": {
     "next": "^16.3.8",
