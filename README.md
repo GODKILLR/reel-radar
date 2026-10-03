@@ -161,11 +161,12 @@ Safe to re-run.
 
 ### 6. Schedule the poll
 
-`vercel.json` already declares `0 */2 * * *`.
+⚠️ **Vercel's Hobby plan caps cron at once per day**, and declaring anything more
+frequent in `vercel.json` makes the *deployment* fail outright with
+`cron_jobs_limits_reached`. So `vercel.json` declares no crons and scheduling is
+external. See [CRON.md](CRON.md).
 
-⚠️ **Vercel's Hobby plan only runs cron once per day.** For 2-hour polling, either
-upgrade to Pro, or use a free external scheduler — [cron-job.org](https://cron-job.org)
-or GitHub Actions — pointed at:
+Point a free scheduler ([cron-job.org](https://cron-job.org) or GitHub Actions) at:
 
 ```
 https://your-app.vercel.app/api/cron?secret=YOUR_CRON_SECRET
