@@ -16,7 +16,9 @@
     "authcheck": "node --import tsx scripts/authcheck.ts",
     "push-env": "node scripts/push-env.mjs",
     "setup-cron": "node scripts/setup-cron.mjs",
-    "trigger": "node scripts/trigger.mjs"
+    "trigger": "node scripts/trigger.mjs",
+    "status": "node --env-file=.env --import tsx scripts/status.ts",
+    "report": "node --env-file=.env --import tsx scripts/report.ts"
   },
   "dependencies": {
     "next": "^16.3.8",
