@@ -15,7 +15,8 @@
     "check": "npm run authcheck && npm run actorcheck && npm run sqlcheck",
     "authcheck": "node --import tsx scripts/authcheck.ts",
     "push-env": "node scripts/push-env.mjs",
-    "setup-cron": "node scripts/setup-cron.mjs"
+    "setup-cron": "node scripts/setup-cron.mjs",
+    "trigger": "node scripts/trigger.mjs"
   },
   "dependencies": {
     "next": "^16.3.8",
