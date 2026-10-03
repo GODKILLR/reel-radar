@@ -140,6 +140,13 @@ async function main() {
   check("viral post scores 6x", byCode.__viral, "6.00");
   check("immature post left unscored", byCode.__fresh, null);
 
+  // Age the first round of snapshots so the next ingest looks like a poll two
+  // hours later rather than a duplicate webhook delivery.
+  await query(
+    `UPDATE post_metrics SET captured_at = now() - interval '2 hours'
+     WHERE left(shortcode, 2) = '__'`
+  );
+
   // ---- monotonic counters: a scrape that regresses must not lower stored views ----
   const r2 = await ingestPosts([
     makePost("__viral", 10, 72), // bogus low reading
@@ -157,23 +164,33 @@ async function main() {
   check("genuine growth applied", midViews!.views, 40000);
 
   // ---- velocity ----
-  // Snapshots are written in the same second here, so backdate the older one
-  // to simulate a real 2-hour poll gap, then recompute.
   const snaps = await queryOne<{ n: string }>(
     `SELECT COUNT(*)::text AS n FROM post_metrics WHERE shortcode = '__mid'`
   );
   check("two snapshots recorded for __mid", snaps!.n, 2);
-  await query(
-    `UPDATE post_metrics SET captured_at = now() - interval '2 hours'
-     WHERE shortcode = '__mid'
-       AND id = (SELECT MIN(id) FROM post_metrics WHERE shortcode = '__mid')`
+
+  // ---- duplicate-snapshot guard ----
+  // Apify retries a failed webhook after about a minute. Re-ingesting
+  // immediately must NOT add a third snapshot, because velocity divides by the
+  // gap between the two most recent readings and a near-zero gap is garbage.
+  await ingestPosts([makePost("__mid", 41_000, 50)]);
+  const afterRetry = await queryOne<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM post_metrics WHERE shortcode = '__mid'`
   );
+  check("webhook retry does not add a snapshot", afterRetry!.n, 2);
+  // The post itself must still take the newer view count.
+  const retryViews = await queryOne<{ views: string }>(
+    `SELECT views FROM posts WHERE shortcode = '__mid'`
+  );
+  check("retry still updates the post row", retryViews!.views, 41000);
+
   await recomputeDerived([cid]);
   const vel = await queryOne<{ views_per_hour: string | null }>(
     `SELECT views_per_hour FROM posts WHERE shortcode = '__mid'`
   );
   // 35k -> 40k over ~2h = ~2500/hr. The gap is 2h minus however long this test
   // took between the two ingests, so assert a band rather than an exact value.
+  // The 41k retry deliberately does not appear: it wrote no snapshot.
   const vph = Number(vel!.views_per_hour);
   check(
     `views_per_hour computed (~2500, got ${vph})`,
@@ -262,11 +279,57 @@ async function main() {
   check("watchlist_status joined", wl.posts[0].watchlist_status, "idea");
 
   // ---- alerts: claim once, dedupe thereafter ----
+  // dispatchOutlierAlerts is global by design, so on a database holding real
+  // tracked accounts it will also claim their outliers. Record what was
+  // already claimed so the assertions can be scoped, and so the real rows can
+  // be restored afterwards -- claiming them here would otherwise silently
+  // suppress genuine alerts for those posts forever.
+  const claimedBefore = new Set(
+    (await query<{ shortcode: string }>(`SELECT shortcode FROM alerts`)).map(
+      (r) => r.shortcode
+    )
+  );
+
   const a1 = await dispatchOutlierAlerts({ silent: true });
-  check("first pass claims both outliers", a1.claimed, 2);
+  check("first pass claims at least the 2 test outliers", a1.claimed >= 2, true);
   check("silent mode sends nothing", a1.notified, 0);
+
+  const testClaims = await query<{ shortcode: string }>(
+    `SELECT shortcode FROM alerts WHERE shortcode IN ('__viral','__mid')
+     ORDER BY shortcode`
+  );
+  check(
+    "both test outliers claimed",
+    testClaims.map((r) => r.shortcode).join(","),
+    "__mid,__viral"
+  );
+
   const a2 = await dispatchOutlierAlerts({ silent: true });
   check("second pass claims nothing (dedupe)", a2.claimed, 0);
+
+  // Release any real-account claims this test created.
+  const claimedAfter = await query<{ shortcode: string }>(
+    `SELECT shortcode FROM alerts WHERE left(shortcode, 2) <> '__'`
+  );
+  const toRelease = claimedAfter
+    .map((r) => r.shortcode)
+    .filter((sc) => !claimedBefore.has(sc));
+  if (toRelease.length) {
+    await query(`DELETE FROM alerts WHERE shortcode = ANY($1::text[])`, [
+      toRelease,
+    ]);
+  }
+  check(
+    `real-account alert claims restored (released ${toRelease.length})`,
+    (
+      await query(
+        `SELECT 1 FROM alerts WHERE left(shortcode,2) <> '__'
+           AND shortcode = ANY($1::text[])`,
+        [toRelease.length ? toRelease : [""]]
+      )
+    ).length,
+    0
+  );
 
   // ---- competitors list route ----
   const compRoute = await import("../src/app/api/competitors/route");

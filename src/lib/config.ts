@@ -43,6 +43,17 @@ export const config = {
     limitPerProfile: num("BACKFILL_LIMIT", 150),
   },
 
+  metrics: {
+    /**
+     * Minimum gap between two snapshots of the same post. Apify retries a
+     * failed webhook after about a minute, and a retry that re-ingests would
+     * otherwise write a second snapshot seconds after the first -- velocity
+     * reads the newest two, so that would produce a meaningless views/hour.
+     * Polls are hours apart, so anything closer than this is a duplicate.
+     */
+    minGapMinutes: num("METRICS_MIN_GAP_MINUTES", 10),
+  },
+
   outlier: {
     /** Views >= this multiple of the account's own median => outlier. */
     threshold: num("OUTLIER_THRESHOLD", 3),

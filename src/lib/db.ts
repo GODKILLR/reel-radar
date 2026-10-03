@@ -18,7 +18,10 @@ function getPool(): Pool {
       connectionString,
       max: 3,
       idleTimeoutMillis: 10_000,
-      connectionTimeoutMillis: 10_000,
+      // Neon's free tier suspends compute when idle, and waking it can take
+      // well over ten seconds. There is no cost to waiting longer, and the
+      // alternative is a failed ingest.
+      connectionTimeoutMillis: 30_000,
       ssl: connectionString.includes("localhost")
         ? undefined
         : { rejectUnauthorized: false },
@@ -39,6 +42,9 @@ const RETRYABLE = new Set([
   "ETIMEDOUT",
   "ECONNREFUSED",
   "EPIPE",
+  // DNS, which fails transiently while a suspended endpoint is coming back.
+  "ENOTFOUND",
+  "EAI_AGAIN",
   "57P01", // admin_shutdown
   "57P03", // cannot_connect_now, i.e. still starting up
   "08006", // connection_failure
@@ -73,8 +79,9 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
       globalForDb.__pool = undefined;
     }
 
-    // 250ms, 750ms, 1750ms -- enough for a Neon cold start.
-    await new Promise((r) => setTimeout(r, 250 * (1 + attempt * 2)));
+    // 1s, 3s, 7s. The old 250/750/1750 schedule gave up inside three seconds,
+    // which is shorter than a cold start usually takes.
+    await new Promise((r) => setTimeout(r, 1000 * (2 ** attempt * 2 - 1)));
     return query<T>(text, params, attempt + 1);
   }
 }

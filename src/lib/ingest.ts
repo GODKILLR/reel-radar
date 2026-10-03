@@ -156,8 +156,17 @@ export async function ingestPosts(
       SELECT p.shortcode, p.views, p.likes, p.comments
       FROM posts p
       WHERE p.shortcode = ANY($1::text[])
+        -- Drop snapshots that land too soon after the previous one. These come
+        -- from Apify retrying a webhook that already ingested, and they would
+        -- corrupt views_per_hour, which divides by the gap between the two
+        -- most recent readings.
+        AND NOT EXISTS (
+          SELECT 1 FROM post_metrics m
+          WHERE m.shortcode = p.shortcode
+            AND m.captured_at > now() - ($2::int * interval '1 minute')
+        )
       `,
-      [cols.shortcode]
+      [cols.shortcode, config.metrics.minGapMinutes]
     );
   }
 
