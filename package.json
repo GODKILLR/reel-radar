@@ -1,0 +1,35 @@
+{
+  "name": "reel-radar",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "migrate": "node --env-file=.env --import tsx scripts/migrate.ts",
+    "poll": "node --env-file=.env --import tsx scripts/poll.ts",
+    "sqlcheck": "node --env-file=.env --import tsx scripts/sqlcheck.ts",
+    "poll:local": "node --env-file=.env --import tsx scripts/poll-local.ts",
+    "actorcheck": "node --import tsx scripts/actorcheck.ts",
+    "check": "npm run authcheck && npm run actorcheck && npm run sqlcheck",
+    "authcheck": "node --import tsx scripts/authcheck.ts"
+  },
+  "dependencies": {
+    "next": "^16.3.8",
+    "pg": "^8.13.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
