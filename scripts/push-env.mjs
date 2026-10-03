@@ -7,7 +7,8 @@
  * anyone. Only the key names and a success/failure mark appear in the output.
  *
  *   npx vercel login        # once, opens a browser
- *   node scripts/push-env.mjs
+ *   npx vercel link         # once, pick the existing reel-radar project
+ *   npm run push-env
  *
  * Re-running is safe: each variable is removed and re-added, so it ends up
  * with exactly one value per environment rather than duplicates.
@@ -24,12 +25,52 @@ const SECRETS = [
 ];
 
 const TARGETS = ["production", "preview", "development"];
-const PROJECT = "reel-radar";
-const SCOPE = "ketans-projects-7062cb5d";
+
+/**
+ * On Windows the npm shims are .cmd batch files, and since Node 18.20 / 20.12
+ * spawn() refuses to execute those without a shell (it throws EINVAL). Every
+ * argument here is a fixed identifier -- key names, environment names -- and
+ * the secret itself travels over stdin, never argv, so the shell never sees it.
+ */
+const IS_WIN = process.platform === "win32";
+
+function vercel(args, stdin = null) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn("npx", ["--yes", "vercel", ...args], {
+        shell: IS_WIN,
+        stdio: [stdin === null ? "ignore" : "pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      resolve({ code: -1, out: "", err: String(err) });
+      return;
+    }
+
+    let out = "";
+    let err = "";
+    child.stdout.on("data", (d) => (out += d.toString()));
+    child.stderr.on("data", (d) => (err += d.toString()));
+    child.on("error", (e) => resolve({ code: -1, out, err: String(e) }));
+
+    if (stdin !== null) {
+      child.stdin.write(stdin);
+      child.stdin.end();
+    }
+    child.on("close", (code) => resolve({ code, out, err }));
+  });
+}
+
+function fail(message, hint) {
+  console.error(`\n${message}`);
+  if (hint) console.error(`   ${hint}`);
+  process.exit(1);
+}
+
+// ---- preflight -------------------------------------------------------------
 
 if (!existsSync(".env")) {
-  console.error("No .env found. Run this from the reel-radar directory.");
-  process.exit(1);
+  fail("No .env found.", "Run this from the reel-radar directory.");
 }
 
 // Parse .env without echoing anything.
@@ -45,61 +86,62 @@ for (const line of readFileSync(".env", "utf8").split(/\r?\n/)) {
 }
 
 const missing = SECRETS.filter((k) => !env.has(k));
-if (missing.length) {
-  console.error(`.env is missing: ${missing.join(", ")}`);
-  process.exit(1);
+if (missing.length) fail(`.env is missing values for: ${missing.join(", ")}`);
+
+process.stdout.write("Checking Vercel CLI... ");
+const who = await vercel(["whoami"]);
+if (who.code !== 0) {
+  console.log("not signed in");
+  fail("Not signed in to Vercel.", "Run:  npx vercel login");
+}
+console.log(`signed in as ${who.out.trim() || "(unknown)"}`);
+
+// The CLI writes repo.json when it detects a git repository and project.json
+// otherwise. Either one means we are linked.
+if (
+  !existsSync(".vercel/repo.json") &&
+  !existsSync(".vercel/project.json")
+) {
+  fail(
+    "This folder is not linked to a Vercel project.",
+    "Run:  npx vercel link --yes --project reel-radar"
+  );
 }
 
-/** Runs the Vercel CLI, feeding `stdin` in without exposing it. */
-function vercel(args, stdin = null) {
-  return new Promise((resolve) => {
-    const child = spawn(
-      process.platform === "win32" ? "npx.cmd" : "npx",
-      ["--yes", "vercel", ...args, "--scope", SCOPE],
-      { stdio: [stdin === null ? "ignore" : "pipe", "pipe", "pipe"] }
-    );
+// ---- push ------------------------------------------------------------------
 
-    let err = "";
-    child.stdout.on("data", () => {});
-    child.stderr.on("data", (d) => (err += d.toString()));
-
-    if (stdin !== null) {
-      child.stdin.write(stdin);
-      child.stdin.end();
-    }
-    child.on("close", (code) => resolve({ code, err }));
-  });
-}
-
-console.log(`Pushing ${SECRETS.length} secrets to ${PROJECT}...\n`);
+console.log(`\nPushing ${SECRETS.length} secrets...\n`);
 
 let failed = 0;
 for (const key of SECRETS) {
   const value = env.get(key);
   const marks = [];
+  let reason = "";
 
   for (const target of TARGETS) {
     // Remove any existing value first so re-runs do not stack duplicates.
     // A missing variable makes this exit non-zero, which is expected.
     await vercel(["env", "rm", key, target, "--yes"]);
 
-    const { code, err } = await vercel(["env", "add", key, target], value);
-    if (code === 0) {
+    const res = await vercel(["env", "add", key, target], value);
+    if (res.code === 0) {
       marks.push(`${target} ok`);
     } else {
       failed++;
       marks.push(`${target} FAILED`);
       // Surface the reason without ever including the value.
-      const reason = err.split("\n").find((l) => /error/i.test(l));
-      if (reason) marks.push(`(${reason.trim().slice(0, 90)})`);
+      reason ||=
+        res.err.split("\n").find((l) => /error|denied|not found/i.test(l)) ?? "";
     }
   }
+
   console.log(`  ${key.padEnd(20)} ${marks.join(", ")}`);
+  if (reason) console.log(`  ${" ".repeat(20)} ${reason.trim().slice(0, 100)}`);
 }
 
-console.log(
-  failed === 0
-    ? "\nAll secrets pushed. Next: redeploy with `npx vercel --prod`."
-    : `\n${failed} assignment(s) failed. Check that you ran \`npx vercel login\`.`
-);
-process.exit(failed === 0 ? 0 : 1);
+if (failed === 0) {
+  console.log("\nAll secrets pushed. Next:  npx vercel --prod");
+  process.exit(0);
+}
+console.log(`\n${failed} assignment(s) failed -- see the reasons above.`);
+process.exit(1);
