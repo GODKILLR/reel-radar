@@ -46,8 +46,8 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
     Date.now() - new Date(post.first_seen_at).getTime() < 3 * 3_600_000;
 
   return (
-    <article className="group flex flex-col overflow-hidden rounded-xl border bg-[var(--surface)] transition hover:border-[var(--accent)]">
-      <div className="relative aspect-[9/13] overflow-hidden bg-[var(--surface-2)]">
+    <article className="sl-card sl-card-hover group flex flex-col overflow-hidden">
+      <div className="relative aspect-[9/13] overflow-hidden border-b-[2.5px] bg-[var(--surface-2)]">
         {post.thumbnail_url && !imgFailed ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
@@ -59,40 +59,42 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
             className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-[var(--muted)]">
+          <div className="sl-label flex h-full w-full items-center justify-center text-[var(--muted)]">
             thumbnail expired
           </div>
         )}
 
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2">
-          <div className="flex flex-wrap gap-1.5">
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {heat !== "none" && score !== null && (
               <span
-                className="nums rounded-md px-1.5 py-0.5 text-[11px] font-bold text-black shadow"
-                style={{
-                  background: heat === "hot" ? "var(--hot)" : "var(--warm)",
-                }}
+                className="sl-sticker nums"
+                style={
+                  heat === "hot"
+                    ? { background: "var(--hot)", color: "#fff" }
+                    : { background: "var(--warm)", color: "var(--ink)" }
+                }
                 title={`${score.toFixed(1)}x this account's median views`}
               >
                 {score.toFixed(1)}×
               </span>
             )}
             {isFresh && (
-              <span className="rounded-md bg-[var(--accent)] px-1.5 py-0.5 text-[11px] font-bold text-white shadow">
-                NEW
+              <span className="sl-tag" style={{ background: "var(--cool)" }}>
+                New
               </span>
             )}
             {post.is_paid_partnership && (
               <span
-                className="rounded-md bg-black/65 px-1.5 py-0.5 text-[11px] font-semibold text-white shadow"
+                className="sl-tag"
                 title="Paid partnership - this reach was partly bought"
               >
-                AD
+                Ad
               </span>
             )}
           </div>
           {len && (
-            <span className="nums rounded-md bg-black/65 px-1.5 py-0.5 text-[11px] text-white">
+            <span className="sl-tag nums" style={{ background: "var(--ink)", color: "#fff" }}>
               {len}
             </span>
           )}
@@ -105,72 +107,92 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
             post.is_watchlisted ? "Remove from watchlist" : "Save to watchlist"
           }
           aria-pressed={post.is_watchlisted}
-          className="absolute bottom-2 right-2 rounded-md bg-black/65 px-2 py-1 text-sm leading-none text-white opacity-0 transition hover:bg-black/85 focus:opacity-100 group-hover:opacity-100 aria-pressed:opacity-100"
+          className="absolute bottom-2.5 right-2.5 flex h-9 w-9 items-center justify-center rounded-full border-[2.5px] bg-white text-lg leading-none opacity-0 shadow-[2px_2px_0_var(--ink)] transition focus:opacity-100 group-hover:opacity-100 aria-pressed:opacity-100"
+          style={{ color: post.is_watchlisted ? "var(--accent)" : "var(--ink)" }}
         >
           {post.is_watchlisted ? "★" : "☆"}
         </button>
 
         {post.watchlist_status && (
-          <span className="absolute bottom-2 left-2 rounded-md bg-[var(--cool)] px-1.5 py-0.5 text-[11px] font-semibold text-black">
+          <span
+            className="sl-tag absolute bottom-2.5 left-2.5"
+            style={{ background: "var(--cool)" }}
+          >
             {STATUS_LABEL[post.watchlist_status] ?? post.watchlist_status}
           </span>
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-2 p-2.5">
+      <div className="flex flex-1 flex-col gap-3 p-3.5">
         <div className="flex items-center justify-between gap-2 text-xs">
           <a
             href={`https://www.instagram.com/${post.username}/`}
             target="_blank"
             rel="noopener noreferrer"
-            className="truncate font-medium hover:text-[var(--accent)]"
+            className="truncate text-[13px] font-bold underline-offset-2 hover:underline"
           >
             @{post.username}
           </a>
           <time
             dateTime={post.posted_at}
             title={new Date(post.posted_at).toLocaleString()}
-            className="shrink-0 text-[var(--muted)]"
+            className="sl-label shrink-0 text-[10px] text-[var(--muted)]"
           >
             {relativeTime(post.posted_at)}
           </time>
         </div>
 
-        <div className="nums grid grid-cols-3 gap-1 text-center text-[11px]">
-          <Metric label="views" value={compactNumber(views)} strong />
-          <Metric label="likes" value={compactNumber(likes)} />
-          <Metric label="comments" value={compactNumber(comments)} />
-        </div>
-
-        <div className="nums flex items-center justify-between text-[11px] text-[var(--muted)]">
-          <span title="Views gained per hour since the last check">
-            {velocity !== null && velocity > 0
-              ? `${compactNumber(velocity)}/hr`
-              : "—"}
-          </span>
-          {replays !== null && (
-            <span title="Plays divided by accounts reached - above 1.5x means people re-watched it">
-              {replays.toFixed(1)}× replay
+        {/* Views are the headline number; velocity rides next to it. */}
+        <div className="flex items-end justify-between gap-2">
+          <div>
+            <div className="nums text-[28px] font-extrabold leading-none tracking-tight">
+              {compactNumber(views)}
+            </div>
+            <div className="sl-label mt-1 text-[10px] text-[var(--muted)]">
+              views
+            </div>
+          </div>
+          {velocity !== null && velocity > 0 && (
+            <span
+              className="sl-tag nums"
+              style={{ background: "var(--cool)" }}
+              title="Views gained per hour since the last check"
+            >
+              ↑ {compactNumber(velocity)}/hr
             </span>
           )}
-          <span title="(likes + comments) / views">
-            {engagementRate(likes, comments, views)}
-          </span>
         </div>
+
+        <div className="nums grid grid-cols-3 divide-x-2 rounded-xl border-2 text-center">
+          <Metric label="likes" value={compactNumber(likes)} />
+          <Metric label="comments" value={compactNumber(comments)} />
+          <Metric
+            label="engage"
+            value={engagementRate(likes, comments, views)}
+            title="(likes + comments) / views"
+          />
+        </div>
+
+        {replays !== null && (
+          <p
+            className="sl-label text-[10px] text-[var(--muted)]"
+            title="Plays divided by accounts reached - above 1.5x means people re-watched it"
+          >
+            {replays.toFixed(1)}× replay ratio
+          </p>
+        )}
 
         {post.audio_song && (
           <button
             type="button"
             disabled={!post.audio_id || !onPickAudio}
-            onClick={() =>
-              post.audio_id && onPickAudio?.(post.audio_id)
-            }
+            onClick={() => post.audio_id && onPickAudio?.(post.audio_id)}
             title={
               post.audio_id
                 ? "Show every tracked reel using this sound"
                 : undefined
             }
-            className="truncate rounded-md bg-[var(--surface-2)] px-1.5 py-1 text-left text-[10px] text-[var(--muted)] transition enabled:hover:text-[var(--accent)]"
+            className="truncate rounded-lg bg-[var(--surface-2)] px-2 py-1.5 text-left text-[11px] font-semibold text-[var(--muted)] transition enabled:hover:text-[var(--ink)]"
           >
             ♪ {post.audio_is_original ? "Original audio" : post.audio_song}
             {post.audio_artist && !post.audio_is_original
@@ -180,7 +202,7 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
         )}
 
         {post.caption && (
-          <p className="line-clamp-2 text-[11px] leading-snug text-[var(--muted)]">
+          <p className="line-clamp-2 text-xs leading-snug text-[var(--muted)]">
             {post.caption}
           </p>
         )}
@@ -189,9 +211,9 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
           href={post.url ?? `https://www.instagram.com/p/${post.shortcode}/`}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-auto rounded-md border px-2 py-1.5 text-center text-[11px] font-medium transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+          className="sl-btn sl-btn-primary sl-btn-sm mt-auto"
         >
-          Open on Instagram →
+          Open reel ↗
         </a>
       </div>
     </article>
@@ -201,20 +223,16 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
 function Metric({
   label,
   value,
-  strong,
+  title,
 }: {
   label: string;
   value: string;
-  strong?: boolean;
+  title?: string;
 }) {
   return (
-    <div className="rounded-md bg-[var(--surface-2)] px-1 py-1">
-      <div className={strong ? "text-sm font-semibold" : "text-sm"}>
-        {value}
-      </div>
-      <div className="text-[10px] uppercase tracking-wide text-[var(--muted)]">
-        {label}
-      </div>
+    <div className="px-1 py-1.5" title={title}>
+      <div className="text-sm font-bold">{value}</div>
+      <div className="sl-label text-[9px] text-[var(--muted)]">{label}</div>
     </div>
   );
 }

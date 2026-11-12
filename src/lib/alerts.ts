@@ -48,6 +48,18 @@ export async function dispatchOutlierAlerts(
       AND p.is_reel
       -- A six-month-old outlier is not news.
       AND p.posted_at > now() - interval '14 days'
+      -- These alerts go to the operator, so only for accounts the operator
+      -- cares about: featured ones, or ones an admin tracks. Other users'
+      -- accounts must not ping the operator's phone.
+      AND EXISTS (
+        SELECT 1 FROM competitors c
+        WHERE c.id = p.competitor_id
+          AND (c.is_curated OR EXISTS (
+            SELECT 1 FROM user_competitors uc
+            JOIN users u ON u.id = uc.user_id
+            WHERE uc.competitor_id = c.id AND u.is_admin
+          ))
+      )
     ON CONFLICT (shortcode, kind) DO NOTHING
     RETURNING shortcode
     `,

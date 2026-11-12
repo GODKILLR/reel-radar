@@ -154,8 +154,8 @@ non-secret tuning variables can be set the same way or left to the defaults in
 
 Note that Vercel enables **SSO protection** on new projects, which blocks
 Apify's webhook and the external cron from reaching the app. Turn it off under
-Settings -> Deployment Protection, but only *after* `DASHBOARD_PASSWORD` is set,
-since the in-app password gate is what replaces it.
+Settings -> Deployment Protection, but only *after* the account system below is
+deployed, since in-app sign-in is what replaces it.
 
 Set `APP_BASE_URL` to your production URL. **Apify calls back to it**, so it
 must be publicly reachable — this is the one variable that cannot point at
@@ -209,6 +209,73 @@ everything else still works. The first backfill claims its outliers *silently*,
 so adding 20 accounts does not fire hundreds of notifications on day one.
 
 ---
+
+## Accounts, plans and points
+
+Users sign up with email + password (`/signup`). Plans and the points price live
+in one file, `src/lib/plans.ts`:
+
+| | Free | Pro | Studio |
+|---|---|---|---|
+| Accounts tracked | 3 | 15 | 50 |
+| Reels per account | latest 200 | 500 | 1,000 |
+| Refresh | daily | 6h | 2h |
+| Saved ideas | 10 | unlimited | unlimited |
+| Discover | top 10 | top 50 | top 100 |
+| Points / month | 50 | 300 | 1,500 |
+
+Adding an account costs 10 points. Points reset monthly (lazily, on the user's
+next visit) and every change is recorded in `points_ledger`.
+
+**Shared data, per-user views.** Posts are collected once however many users
+track an account. What is per-user: which accounts they track, their saved
+ideas, their points. An account nobody tracks (and that is not featured) stops
+being collected, so it stops costing money.
+
+**Vendor stays hidden.** Users only see points and plan limits. Collection cost,
+the vendor name and raw scrape errors appear only on `/admin`, whose API returns
+404 to non-admins. The collector's callback lives at `/api/hooks/scrape`.
+
+**Bring your own key (free, up to 30 accounts).** A Free user can paste their
+own Apify API token on the Accounts page. We verify it, store it **encrypted**
+(AES-256-GCM, bound to their user id, needs `KEY_ENCRYPTION_SECRET`), and
+collect their accounts on *their* monthly free credit. They get 30 accounts at a
+daily refresh and adding accounts costs no points. The token is never sent back
+to the browser (only its last 4 characters).
+
+- **Who pays for what.** Each cycle runs one pool on our key (featured accounts,
+  and any account tracked by a user who relies on us) and one pool per
+  self-funded user on that user's key. A user's broken key or empty credit only
+  pauses their own accounts; those never fall back onto our bill.
+- **Credit.** Before each run we read the user's remaining credit and skip runs
+  that would not fit. Out-of-credit users are re-checked every cycle and resume
+  by themselves when their credit renews.
+- **Callbacks.** Run-completion callbacks use a single-use per-run token
+  (`?n=`), never a global secret, because that URL is visible inside the user's
+  own collector account. Results are only accepted for the accounts that run was
+  asked to collect.
+- **No loophole.** A user cannot disconnect their key while tracking more
+  accounts than the Free plan allows, otherwise connect, add 30, disconnect
+  would move 30 accounts onto our bill.
+- **Admin.** `/admin` shows who has their own key and its status. Collection
+  spend there counts only runs on our key.
+
+**Discover** shows outliers from accounts an admin has switched to "Featured" on
+`/admin`. Nothing is featured by default.
+
+**Going live with this change** (one time, in order):
+
+1. Apply the schema: `npm run migrate` (additive and idempotent: new tables
+   plus one new column; existing data is untouched).
+2. Sign up in the app, then: `npm run make-admin -- you@example.com --claim-legacy`
+   (makes you admin and links the accounts collected before accounts existed).
+3. `npm run push-env` (this also sends `KEY_ENCRYPTION_SECRET`: keep a backup of
+   it, because losing it makes every stored user key unreadable), deploy, and
+   re-check `APP_BASE_URL` (the collector calls back to it).
+4. On `/admin`, switch on the accounts you want in Discover.
+
+Paid upgrades are switched on by hand from `/admin` until a payment provider is
+connected.
 
 ## Local development
 

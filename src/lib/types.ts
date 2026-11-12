@@ -42,42 +42,69 @@ export interface Competitor {
   display_name: string | null;
   profile_pic_url: string | null;
   followers: string | null;
-  is_active: boolean;
   backfilled_at: string | null;
   last_scraped_at: string | null;
   median_views: string | null;
   post_count: number;
-  notes: string | null;
   posts_last_7d: string;
   outliers_last_30d: string;
 }
 
+/** What a signed-in user is told about freshness and their own counts. */
 export interface Stats {
   summary: {
-    active_competitors: string;
+    accounts: string;
     total_posts: string;
     posts_last_24h: string;
     outliers_last_7d: string;
-    watchlist_count: string;
-  } | null;
-  lastRun: {
-    tier: string;
-    status: string;
-    posts_seen: number;
-    posts_new: number;
-    cost_usd: string;
-    started_at: string;
-    finished_at: string | null;
-    error: string | null;
-  } | null;
-  spend: { last_24h: string; last_30d: string } | null;
-  settings: {
-    outlierThreshold: number;
-    hotWindowDays: number;
-    warmEveryHours: number;
-    actor: string;
-    costPerPostUsd: number;
+    saved: string;
   };
+  freshness: { updatedAt: string | null; delayed: boolean };
+  settings: { outlierThreshold: number };
+}
+
+export interface PlanLimits {
+  maxAccounts: number;
+  reelsPerAccount: number;
+  refreshHours: number;
+  savedLimit: number;
+  discoverLimit: number;
+  monthlyPoints: number;
+}
+
+export interface Me {
+  user: {
+    id: number;
+    email: string;
+    name: string | null;
+    plan: string;
+    planName: string;
+    /** Collecting on their own key (unlocks higher limits). */
+    ownKey: boolean;
+    points: number;
+    pointsResetAt: string;
+    isAdmin: boolean;
+    limits: PlanLimits;
+  };
+  usage: { accounts: number; saved: number };
+  ledger: {
+    delta: number;
+    balance_after: number;
+    reason: string;
+    created_at: string;
+  }[];
+  addAccountCost: number;
+  plans: {
+    id: string;
+    name: string;
+    blurb: string;
+    maxAccounts: number;
+    reelsPerAccount: number;
+    refreshHours: number;
+    savedLimit: number;
+    discoverLimit: number;
+    monthlyPoints: number;
+  }[];
 }
 
 export type SortKey =

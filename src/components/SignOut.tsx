@@ -1,12 +1,8 @@
 "use client";
 
-/**
- * Only rendered as a no-op when no password is configured, since the middleware
- * leaves everything open in that case and there is no session to end.
- */
 export default function SignOut() {
   async function signOut() {
-    await fetch("/api/auth", { method: "DELETE" });
+    await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
   }
 
@@ -14,7 +10,7 @@ export default function SignOut() {
     <button
       type="button"
       onClick={signOut}
-      className="ml-auto rounded-md px-2.5 py-1 text-xs text-[var(--muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--fg)]"
+      className="sl-label rounded-md px-2 py-1 text-[var(--muted)] transition hover:text-[var(--ink)]"
     >
       Sign out
     </button>

@@ -21,7 +21,8 @@ const SECRETS = [
   "APIFY_TOKEN",
   "CRON_SECRET",
   "WEBHOOK_SECRET",
-  "DASHBOARD_PASSWORD",
+  "ADMIN_EMAILS",
+  "KEY_ENCRYPTION_SECRET",
 ];
 
 const TARGETS = ["production", "preview", "development"];

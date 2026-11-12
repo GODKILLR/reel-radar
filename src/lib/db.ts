@@ -94,6 +94,39 @@ export async function queryOne<T extends QueryResultRow = QueryResultRow>(
   return rows[0] ?? null;
 }
 
+export interface Tx {
+  query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    params?: unknown[]
+  ): Promise<T[]>;
+}
+
+/**
+ * Runs `fn` inside one transaction on a single connection. Use it whenever a
+ * check and a write must not be separated, e.g. "is there room under the plan
+ * limit?" followed by the insert.
+ */
+export async function transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    const tx: Tx = {
+      query: async <R extends QueryResultRow>(
+        text: string,
+        params: unknown[] = []
+      ) => (await client.query<R>(text, params)).rows,
+    };
+    const result = await fn(tx);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 /** Runs the statements in schema.sql. Idempotent. */
 export async function migrate(): Promise<void> {
   const { readFile } = await import("node:fs/promises");

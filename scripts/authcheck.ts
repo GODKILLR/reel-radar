@@ -1,17 +1,44 @@
 /**
- * Verifies the session cookie cannot be forged, replayed past expiry, or
- * bypassed. This is the only thing standing between the public internet and
- * the dashboard, so it gets explicit tests.
+ * Verifies the things that must never break in the account system, with no
+ * database needed:
+ *   - session cookies cannot be forged, extended, replayed or re-pointed at
+ *     another user
+ *   - passwords are hashed (never stored), verified correctly, and policy holds
+ *   - emails are normalised so one person cannot register twice via casing
+ *   - plan limits are what the product promises
  */
 process.env.WEBHOOK_SECRET = "test-signing-key-0123456789abcdef";
-process.env.DASHBOARD_PASSWORD = "correct-horse-battery";
 
 import {
   createSessionValue,
+  readSession,
   isValidSession,
-  checkPassword,
-  isAuthEnabled,
 } from "../src/lib/auth";
+import {
+  hashPassword,
+  verifyPassword,
+  normalizeEmail,
+  passwordProblem,
+  DUMMY_HASH,
+} from "../src/lib/password";
+import {
+  encryptToken,
+  decryptToken,
+  encryptionEnabled,
+  looksLikeToken,
+} from "../src/lib/collector";
+import {
+  splitPools,
+  refreshHoursFor,
+  type Competitor,
+} from "../src/lib/poller";
+import {
+  ADD_ACCOUNT_COST,
+  PLANS,
+  PUBLIC_PLANS,
+  isUnlimited,
+  planOf,
+} from "../src/lib/plans";
 
 let failures = 0;
 function check(name: string, got: unknown, want: unknown) {
@@ -39,65 +66,198 @@ async function signWith(key: string, message: string): Promise<string> {
 }
 
 async function main() {
-  check("auth enabled when password set", isAuthEnabled(), true);
-
-  // ---- password ----
-  check("correct password accepted", await checkPassword("correct-horse-battery"), true);
-  check("wrong password rejected", await checkPassword("wrong"), false);
-  check("empty password rejected", await checkPassword(""), false);
-  check("prefix of password rejected", await checkPassword("correct-horse"), false);
-  check("case variation rejected", await checkPassword("Correct-Horse-Battery"), false);
-
   // ---- session round trip ----
-  const good = await createSessionValue();
-  check("freshly issued session is valid", await isValidSession(good), true);
+  const good = await createSessionValue(42);
+  check("fresh session reads back the user id", await readSession(good), 42);
+  check("fresh session is valid", await isValidSession(good), true);
 
   // ---- forgery ----
-  check("undefined rejected", await isValidSession(undefined), false);
-  check("empty rejected", await isValidSession(""), false);
-  check("garbage rejected", await isValidSession("garbage"), false);
-  check("no signature rejected", await isValidSession("9999999999999"), false);
+  check("undefined rejected", await readSession(undefined), null);
+  check("empty rejected", await readSession(""), null);
+  check("garbage rejected", await readSession("garbage"), null);
+  check("old two-part format rejected", await readSession("9999999999999.abcd"), null);
   check(
     "bad signature rejected",
-    await isValidSession(`${Date.now() + 1000}.deadbeef`),
-    false
+    await readSession(`42.${Date.now() + 100000}.deadbeef`),
+    null
   );
 
-  // Tamper with the expiry but keep the original signature. The HMAC covers
-  // the expiry, so extending a session must invalidate it.
-  const [exp, sig] = good.split(".");
+  const [uid, exp, sig] = good.split(".");
+
+  // The HMAC covers the user id, so swapping it for another user must fail.
+  check("different user id, same signature rejected", await readSession(`43.${exp}.${sig}`), null);
+  check("admin-style low id rejected", await readSession(`1.${exp}.${sig}`), null);
+
+  // Extending the expiry must invalidate the signature.
   check(
     "extended expiry rejected",
-    await isValidSession(`${Number(exp) + 86_400_000}.${sig}`),
-    false
+    await readSession(`${uid}.${Number(exp) + 86_400_000}.${sig}`),
+    null
   );
 
-  // Flip one character of the signature.
-  const flipped = `${exp}.${sig.slice(0, -1)}${sig.slice(-1) === "a" ? "b" : "a"}`;
-  check("mutated signature rejected", await isValidSession(flipped), false);
+  const flipped = `${uid}.${exp}.${sig.slice(0, -1)}${sig.slice(-1) === "a" ? "b" : "a"}`;
+  check("mutated signature rejected", await readSession(flipped), null);
+
+  // Non-numeric user id (injection attempts).
+  check("non-numeric user id rejected", await readSession(`4x.${exp}.${sig}`), null);
+  check("negative user id rejected", await readSession(`-1.${exp}.${sig}`), null);
 
   // ---- expiry ----
-  // Correctly signed with the real key, but already expired.
   const pastExp = String(Date.now() - 1000);
-  const pastSig = await signWith(process.env.WEBHOOK_SECRET!, pastExp);
+  const pastSig = await signWith(process.env.WEBHOOK_SECRET!, `42.${pastExp}`);
   check(
     "expired-but-correctly-signed rejected",
-    await isValidSession(`${pastExp}.${pastSig}`),
-    false
+    await readSession(`42.${pastExp}.${pastSig}`),
+    null
   );
 
   // ---- wrong signing key ----
-  // An attacker who knows the format but not the key cannot mint a session.
   const futureExp = String(Date.now() + 86_400_000);
-  const foreignSig = await signWith("some-other-key-entirely", futureExp);
+  const foreignSig = await signWith("some-other-key-entirely", `42.${futureExp}`);
   check(
     "cookie signed with a different key rejected",
-    await isValidSession(`${futureExp}.${foreignSig}`),
+    await readSession(`42.${futureExp}.${foreignSig}`),
+    null
+  );
+
+  // ---- fails closed with no key ----
+  const savedKey = process.env.WEBHOOK_SECRET;
+  delete process.env.WEBHOOK_SECRET;
+  delete process.env.AUTH_SECRET;
+  check("no signing key => existing cookie rejected", await readSession(good), null);
+  let threw = false;
+  try {
+    await createSessionValue(1);
+  } catch {
+    threw = true;
+  }
+  check("no signing key => cannot mint a session", threw, true);
+  process.env.WEBHOOK_SECRET = savedKey;
+
+  // ---- passwords ----
+  const hash = await hashPassword("correct-horse-battery");
+  check("hash is not the password", hash.includes("correct-horse"), false);
+  check("hash uses scrypt format", hash.startsWith("scrypt$"), true);
+  check("correct password verifies", await verifyPassword("correct-horse-battery", hash), true);
+  check("wrong password fails", await verifyPassword("wrong-horse-battery", hash), false);
+  check("empty password fails", await verifyPassword("", hash), false);
+  check("case variation fails", await verifyPassword("Correct-Horse-Battery", hash), false);
+  check(
+    "same password hashes differently (salted)",
+    hash === (await hashPassword("correct-horse-battery")),
     false
+  );
+  check("garbage stored hash fails closed", await verifyPassword("x", "not-a-hash"), false);
+  check("dummy hash never verifies", await verifyPassword("anything", DUMMY_HASH), false);
+
+  check("short password rejected", passwordProblem("short") !== null, true);
+  check("8 chars accepted", passwordProblem("12345678"), null);
+  check("non-string rejected", passwordProblem(undefined) !== null, true);
+  check("huge password rejected", passwordProblem("a".repeat(500)) !== null, true);
+
+  // ---- emails ----
+  check("email lower-cased + trimmed", normalizeEmail("  Ken@Example.COM "), "ken@example.com");
+  check("email without @ rejected", normalizeEmail("nope"), null);
+  check("email with spaces rejected", normalizeEmail("a b@c.com"), null);
+  check("non-string email rejected", normalizeEmail(123), null);
+
+  // ---- plans: what the product promises ----
+  check("free: 3 accounts", PLANS.free.maxAccounts, 3);
+  check("free: latest 200 reels", PLANS.free.reelsPerAccount, 200);
+  check("free: daily refresh", PLANS.free.refreshHours, 24);
+  check("free: starts with 50 points", PLANS.free.monthlyPoints, 50);
+  check("add-account cost is positive", ADD_ACCOUNT_COST > 0, true);
+  check(
+    "free points afford more than the account cap (room to swap)",
+    PLANS.free.monthlyPoints >= PLANS.free.maxAccounts * ADD_ACCOUNT_COST,
+    true
+  );
+  check("unknown plan falls back to free", planOf("platinum").id, "free");
+  check("null plan falls back to free", planOf(null).id, "free");
+  check("admin plan is never public", PUBLIC_PLANS.some((p) => p.id === "admin"), false);
+  check("paid plans strictly beat free on accounts", PLANS.pro.maxAccounts > PLANS.free.maxAccounts && PLANS.studio.maxAccounts > PLANS.pro.maxAccounts, true);
+  check("paid plans refresh faster", PLANS.pro.refreshHours < PLANS.free.refreshHours && PLANS.studio.refreshHours < PLANS.pro.refreshHours, true);
+  check("unlimited detection", isUnlimited(PLANS.pro.savedLimit), true);
+  check("free saved is limited", isUnlimited(PLANS.free.savedLimit), false);
+
+  // ---- collector keys: encryption at rest ----
+  process.env.KEY_ENCRYPTION_SECRET = "k".repeat(40);
+  const secretToken = "apify_api_AbCdEf1234567890xyzSECRET";
+  const blob = encryptToken(secretToken, 7);
+  check("ciphertext does not contain the token", blob.includes("SECRET") || blob.includes("apify_api"), false);
+  check("decrypts for the same user", decryptToken(blob, 7), secretToken);
+  check("another user cannot decrypt a copied blob", decryptToken(blob, 8), null);
+  check(
+    "same token encrypts differently each time (random IV)",
+    blob === encryptToken(secretToken, 7),
+    false
+  );
+  const parts = blob.split(".");
+  const flippedCt = `${parts[0]}.${parts[1]}.${parts[2]}.${parts[3].slice(0, -2)}${parts[3].slice(-2) === "AA" ? "BB" : "AA"}`;
+  check("tampered ciphertext rejected", decryptToken(flippedCt, 7), null);
+  check("tampered tag rejected", decryptToken(`${parts[0]}.${parts[1]}.${"A".repeat(parts[2].length)}.${parts[3]}`, 7), null);
+  check("garbage blob rejected", decryptToken("nonsense", 7), null);
+  check("null blob rejected", decryptToken(null, 7), null);
+  process.env.KEY_ENCRYPTION_SECRET = "z".repeat(40);
+  check("wrong secret cannot decrypt", decryptToken(blob, 7), null);
+  process.env.KEY_ENCRYPTION_SECRET = "short";
+  check("short secret disables the feature", encryptionEnabled(), false);
+  let threw2 = false;
+  try {
+    encryptToken("x".repeat(30), 1);
+  } catch {
+    threw2 = true;
+  }
+  check("cannot encrypt without a proper secret", threw2, true);
+  check("nothing decrypts without a secret", decryptToken(blob, 7), null);
+  process.env.KEY_ENCRYPTION_SECRET = "k".repeat(40);
+  check("proper secret enables it", encryptionEnabled(), true);
+
+  check("real-looking token accepted", looksLikeToken("apify_api_AbCdEf1234567890xyzW"), true);
+  check("token with spaces rejected", looksLikeToken("has space inside it 1234567890"), false);
+  check("too-short token rejected", looksLikeToken("abc"), false);
+  check("non-string token rejected", looksLikeToken({ a: 1 }), false);
+  check("injection-y token rejected", looksLikeToken("abc/../../etc/passwd_12345678"), false);
+
+  // ---- collector pools: who pays for which account ----
+  const mk = (over: Partial<Competitor>): Competitor => ({
+    id: 1,
+    username: "a",
+    backfilled_at: null,
+    last_scraped_at: null,
+    is_curated: false,
+    plans: [],
+    platform_trackers: 0,
+    key_owner_ids: [],
+    ...over,
+  });
+  const pools = splitPools([
+    mk({ id: 1, username: "featured", is_curated: true }),
+    mk({ id: 2, username: "shared", platform_trackers: 2, key_owner_ids: ["9"] }),
+    mk({ id: 3, username: "mine", key_owner_ids: ["9"] }),
+    mk({ id: 4, username: "twokeys", key_owner_ids: ["12", "9"] }),
+    mk({ id: 5, username: "paused" }), // only tracked by a user whose key is broken
+  ]);
+  check("featured account is on the platform", pools.platform.some((c) => c.username === "featured"), true);
+  check("account with a platform-funded tracker stays on the platform (shared, scraped once)", pools.platform.some((c) => c.username === "shared"), true);
+  check("key-only account goes to that user's pool", pools.byUser.get("9")?.some((c) => c.username === "mine"), true);
+  check("two key owners: deterministic single owner (lowest id)", [pools.byUser.get("9")?.some((c) => c.username === "twokeys"), pools.byUser.has("12")], [true, false]);
+  check("account of a broken-key user is in NO pool (never silently becomes our cost)", [pools.platform.some((c) => c.username === "paused"), [...pools.byUser.values()].flat().some((c) => c.username === "paused")], [false, false]);
+  check("'connect' users refresh daily", refreshHoursFor({ plans: ["connect"], is_curated: false }), 24);
+  check("connect limits: 30 accounts, 200 reels", [PLANS.connect.maxAccounts, PLANS.connect.reelsPerAccount], [30, 200]);
+  check("connect plan is never public", PUBLIC_PLANS.some((p) => p.id === "connect"), false);
+  check(
+    "30 accounts at a daily refresh fits one monthly free credit ($5)",
+    (() => {
+      const perAcct = (730 / 24) * 8 * 0.0003 + (730 / 168) * 60 * 0.0003; // refresh + weekly sweep
+      const runFees = (730 / 24) * 0.005 + (730 / 168) * 0.005;
+      return 30 * perAcct + runFees < 5;
+    })(),
+    true
   );
 
   console.log(
-    failures === 0 ? "\nAll auth checks passed." : `\n${failures} FAILED`
+    failures === 0 ? "\nAll auth + plan checks passed." : `\n${failures} FAILED`
   );
   process.exit(failures === 0 ? 0 : 1);
 }

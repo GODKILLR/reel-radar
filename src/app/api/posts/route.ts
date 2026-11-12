@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { query } from "@/lib/db";
+import { authed, limitsFor } from "@/lib/session";
+import { VISIBLE_POSTS_CTE } from "@/lib/feed";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +22,11 @@ const SORTS: Record<string, string> = {
 };
 
 export async function GET(req: NextRequest) {
+  const a = await authed();
+  if ("res" in a) return a.res;
+  const { user } = a;
+  const limits = limitsFor(user);
+
   const sp = new URL(req.url).searchParams;
 
   const sortKey = sp.get("sort") ?? "recent";
@@ -28,8 +35,9 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(Math.max(Number(sp.get("limit") ?? 60), 1), 200);
   const offset = Math.max(Number(sp.get("offset") ?? 0), 0);
 
+  // $1 = user, $2 = how deep the plan reaches; filters start at $3.
+  const params: unknown[] = [user.id, limits.reelsPerAccount];
   const conditions: string[] = ["TRUE"];
-  const params: unknown[] = [];
 
   const competitorId = sp.get("competitorId");
   if (competitorId && competitorId !== "all") {
@@ -71,6 +79,7 @@ export async function GET(req: NextRequest) {
   }
 
   const where = conditions.join(" AND ");
+  const filterParams = [...params];
 
   params.push(limit, offset);
   const limitParam = params.length - 1;
@@ -78,6 +87,7 @@ export async function GET(req: NextRequest) {
 
   const rows = await query(
     `
+    WITH ${VISIBLE_POSTS_CTE}
     SELECT
       p.shortcode, p.url, p.caption, p.hashtags, p.mentions,
       p.thumbnail_url, p.video_url,
@@ -89,9 +99,11 @@ export async function GET(req: NextRequest) {
       c.median_views,
       w.status AS watchlist_status, w.note AS watchlist_note,
       (w.shortcode IS NOT NULL) AS is_watchlisted
-    FROM posts p
+    FROM visible v
+    JOIN posts p ON p.shortcode = v.shortcode
     JOIN competitors c ON c.id = p.competitor_id
-    LEFT JOIN watchlist w ON w.shortcode = p.shortcode
+    LEFT JOIN user_watchlist w
+      ON w.shortcode = p.shortcode AND w.user_id = $1
     WHERE ${where}
     ORDER BY ${orderBy}
     LIMIT $${limitParam} OFFSET $${offsetParam}
@@ -101,13 +113,16 @@ export async function GET(req: NextRequest) {
 
   const totals = await query<{ total: string }>(
     `
+    WITH ${VISIBLE_POSTS_CTE}
     SELECT COUNT(*)::text AS total
-    FROM posts p
+    FROM visible v
+    JOIN posts p ON p.shortcode = v.shortcode
     JOIN competitors c ON c.id = p.competitor_id
-    LEFT JOIN watchlist w ON w.shortcode = p.shortcode
+    LEFT JOIN user_watchlist w
+      ON w.shortcode = p.shortcode AND w.user_id = $1
     WHERE ${where}
     `,
-    params.slice(0, params.length - 2)
+    filterParams
   );
 
   return NextResponse.json({

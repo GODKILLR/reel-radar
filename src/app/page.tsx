@@ -1,10 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PostCard from "@/components/PostCard";
 import Toolbar, { type Filters } from "@/components/Toolbar";
 import type { Competitor, Post, Stats } from "@/lib/types";
 import { compactNumber, relativeTime } from "@/lib/format";
+import { api } from "@/lib/client";
+import { useWatch } from "@/lib/useWatch";
 
 const PAGE_SIZE = 60;
 
@@ -27,6 +30,7 @@ export default function FeedPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
+  const [competitorsLoaded, setCompetitorsLoaded] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [audioId, setAudioId] = useState<string | null>(null);
   const [audioLabel, setAudioLabel] = useState<string | null>(null);
@@ -66,9 +70,9 @@ export default function FeedPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/posts?${queryString}&offset=${atOffset}`);
-        if (!res.ok) throw new Error(`Request failed (${res.status})`);
-        const data = (await res.json()) as { posts: Post[]; total: number };
+        const data = await api<{ posts: Post[]; total: number }>(
+          `/api/posts?${queryString}&offset=${atOffset}`
+        );
         setPosts((prev) => (append ? [...prev, ...data.posts] : data.posts));
         setTotal(data.total);
       } catch (err) {
@@ -88,57 +92,20 @@ export default function FeedPage() {
     void (async () => {
       try {
         const [c, s] = await Promise.all([
-          fetch("/api/competitors").then((r) => r.json()),
-          fetch("/api/stats").then((r) => r.json()),
+          api<{ competitors: Competitor[] }>("/api/competitors"),
+          api<Stats>("/api/stats"),
         ]);
         setCompetitors(c.competitors ?? []);
         setStats(s);
       } catch {
         // The header strip is non-essential; the feed still works without it.
+      } finally {
+        setCompetitorsLoaded(true);
       }
     })();
   }, []);
 
-  const toggleWatch = useCallback(async (post: Post) => {
-    const nextWatched = !post.is_watchlisted;
-
-    // Optimistic: starring should feel instant while scanning a grid.
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.shortcode === post.shortcode
-          ? {
-              ...p,
-              is_watchlisted: nextWatched,
-              watchlist_status: nextWatched ? "idea" : null,
-            }
-          : p
-      )
-    );
-
-    try {
-      const res = nextWatched
-        ? await fetch("/api/watchlist", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ shortcode: post.shortcode }),
-          })
-        : await fetch(`/api/watchlist/${post.shortcode}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("save failed");
-    } catch {
-      // Roll back so the star never lies about what is stored.
-      setPosts((prev) =>
-        prev.map((p) =>
-          p.shortcode === post.shortcode
-            ? {
-                ...p,
-                is_watchlisted: post.is_watchlisted,
-                watchlist_status: post.watchlist_status,
-              }
-            : p
-        )
-      );
-    }
-  }, []);
+  const toggleWatch = useWatch(setPosts, setError);
 
   const pickAudio = useCallback(
     (id: string) => {
@@ -154,24 +121,39 @@ export default function FeedPage() {
   );
 
   const hasMore = posts.length < total;
+  const hasNoAccounts = competitorsLoaded && competitors.length === 0;
 
   return (
     <>
+      <section className="mb-6">
+        <p className="sl-label text-[var(--muted)]">
+          <span style={{ color: "var(--hot)" }}>●</span> 01 · My feed
+        </p>
+        <h1 className="mt-2 max-w-3xl text-4xl font-extrabold leading-[1.02] tracking-tight sm:text-5xl">
+          Spot the reels that <span className="sl-kw">break</span> the pattern.
+        </h1>
+        <p className="mt-3 max-w-xl text-base text-[var(--muted)]">
+          Every reel flagged here beat its own account&apos;s average. Copy the
+          idea while it&apos;s still working.
+        </p>
+      </section>
+
       <StatStrip stats={stats} />
 
-      <Toolbar
-        filters={filters}
-        competitors={competitors}
-        total={total}
-        loading={loading}
-        onChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
-      />
+      {!hasNoAccounts && (
+        <Toolbar
+          filters={filters}
+          competitors={competitors}
+          total={total}
+          loading={loading}
+          onChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
+        />
+      )}
 
       {audioId && (
-        <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border bg-[var(--surface)] p-3 text-sm">
+        <div className="sl-card mb-4 flex items-center justify-between gap-3 p-3 text-sm">
           <span>
-            Showing tracked reels using{" "}
-            <strong>♪ {audioLabel}</strong>
+            Showing tracked reels using <strong>♪ {audioLabel}</strong>
           </span>
           <button
             type="button"
@@ -179,7 +161,7 @@ export default function FeedPage() {
               setAudioId(null);
               setAudioLabel(null);
             }}
-            className="rounded-md border px-2 py-1 text-xs transition hover:border-[var(--accent)]"
+            className="sl-btn sl-btn-sm"
           >
             Clear
           </button>
@@ -187,15 +169,21 @@ export default function FeedPage() {
       )}
 
       {error && (
-        <div className="mb-4 rounded-lg border border-[var(--hot)] bg-[var(--surface)] p-3 text-sm">
+        <div
+          role="alert"
+          className="sl-card mb-4 p-3 text-sm font-semibold"
+          style={{ background: "var(--hot)", color: "#fff" }}
+        >
           {error}
         </div>
       )}
 
-      {!loading && posts.length === 0 ? (
-        <EmptyState hasCompetitors={competitors.length > 0} />
+      {hasNoAccounts ? (
+        <Onboarding />
+      ) : !loading && posts.length === 0 ? (
+        <EmptyState />
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
           {posts.map((post) => (
             <PostCard
               key={post.shortcode}
@@ -213,7 +201,7 @@ export default function FeedPage() {
             type="button"
             disabled={loading}
             onClick={() => setOffset(posts.length)}
-            className="rounded-md border px-4 py-2 text-sm font-medium transition hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50"
+            className="sl-btn"
           >
             {loading ? "Loading…" : `Load more (${total - posts.length} left)`}
           </button>
@@ -228,44 +216,53 @@ function StatStrip({ stats }: { stats: Stats | null }) {
   const s = stats.summary;
 
   const items = [
-    { label: "Accounts", value: s.active_competitors },
-    { label: "Posts tracked", value: compactNumber(Number(s.total_posts)) },
+    { label: "Accounts", value: s.accounts },
+    { label: "Reels in view", value: compactNumber(Number(s.total_posts)) },
     { label: "New in 24h", value: s.posts_last_24h },
     { label: "Outliers / 7d", value: s.outliers_last_7d, accent: true },
-    { label: "Saved ideas", value: s.watchlist_count },
+    { label: "Saved ideas", value: s.saved },
   ];
 
+  const { updatedAt, delayed } = stats.freshness;
+
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
+    <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
       {items.map((item) => (
         <div
           key={item.label}
-          className="flex-1 rounded-xl border bg-[var(--surface)] px-3 py-2"
+          className="sl-card sl-halftone px-4 py-3"
+          style={
+            item.accent
+              ? { background: "var(--hot)", color: "#fff" }
+              : undefined
+          }
         >
-          <div
-            className="nums text-lg font-semibold"
-            style={item.accent ? { color: "var(--hot)" } : undefined}
-          >
+          <div className="nums text-3xl font-extrabold leading-none tracking-tight">
             {item.value}
           </div>
-          <div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">
+          <div
+            className="sl-label mt-1.5 text-[10px]"
+            style={{ opacity: item.accent ? 0.95 : 0.65 }}
+          >
             {item.label}
           </div>
         </div>
       ))}
-      {stats.lastRun && (
-        <div className="rounded-xl border bg-[var(--surface)] px-3 py-2 text-right">
-          <div className="text-xs">
-            {stats.lastRun.status === "failed" ? (
-              <span style={{ color: "var(--hot)" }}>last check failed</span>
-            ) : (
-              <span style={{ color: "var(--cool)" }}>
-                checked {relativeTime(stats.lastRun.started_at)}
-              </span>
-            )}
+      {updatedAt && (
+        <div
+          className="sl-card px-4 py-3"
+          style={{ background: delayed ? "var(--warm)" : "var(--surface)" }}
+        >
+          <div className="flex items-center gap-2 text-sm font-bold">
+            <span
+              aria-hidden
+              className="inline-block h-2.5 w-2.5 rounded-full border-2"
+              style={{ background: delayed ? "var(--hot)" : "var(--cool)" }}
+            />
+            {delayed ? "Refresh delayed" : "Up to date"}
           </div>
-          <div className="nums text-[11px] text-[var(--muted)]">
-            ${Number(stats.spend?.last_30d ?? 0).toFixed(2)} / 30d
+          <div className="sl-label mt-1.5 text-[10px] opacity-65">
+            updated {relativeTime(updatedAt)}
           </div>
         </div>
       )}
@@ -273,26 +270,36 @@ function StatStrip({ stats }: { stats: Stats | null }) {
   );
 }
 
-function EmptyState({ hasCompetitors }: { hasCompetitors: boolean }) {
+/** First-run state: nothing tracked yet, so point at the two ways forward. */
+function Onboarding() {
   return (
-    <div className="rounded-xl border bg-[var(--surface)] p-10 text-center">
-      <p className="text-sm font-medium">
-        {hasCompetitors
-          ? "No posts match these filters yet."
-          : "No competitors tracked yet."}
+    <div className="sl-card p-10 text-center">
+      <p className="text-2xl font-extrabold">
+        Your feed is <span className="sl-kw">empty</span> - for now.
       </p>
-      <p className="mt-1 text-sm text-[var(--muted)]">
-        {hasCompetitors ? (
-          "If you just added an account, its backfill runs on the next poll and can take a few minutes to land."
-        ) : (
-          <>
-            Add one on the{" "}
-            <a href="/competitors" className="text-[var(--accent)] underline">
-              Competitors
-            </a>{" "}
-            page to start collecting.
-          </>
-        )}
+      <p className="mx-auto mt-2 max-w-md text-sm text-[var(--muted)]">
+        Add up to three Instagram accounts to track, or start with this
+        month&apos;s strongest outliers in Discover.
+      </p>
+      <div className="mt-5 flex flex-wrap justify-center gap-3">
+        <Link href="/competitors" className="sl-btn sl-btn-primary">
+          Track an account →
+        </Link>
+        <Link href="/discover" className="sl-btn">
+          Browse Discover
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="sl-card p-12 text-center">
+      <p className="text-xl font-extrabold">No posts match these filters yet.</p>
+      <p className="mx-auto mt-2 max-w-md text-sm text-[var(--muted)]">
+        If you just added an account, its history is collected shortly and can
+        take a little while to appear.
       </p>
     </div>
   );

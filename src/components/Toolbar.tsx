@@ -60,18 +60,21 @@ export default function Toolbar({
   const activeSort = SORT_OPTIONS.find((s) => s.value === filters.sort);
 
   return (
-    <div className="mb-4 flex flex-col gap-3 rounded-xl border bg-[var(--surface)] p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="search"
-          value={filters.q}
-          onChange={(e) => onChange({ q: e.target.value })}
-          placeholder="Search captions or handles…"
-          className="min-w-[200px] flex-1 rounded-md border bg-[var(--surface-2)] px-3 py-1.5 text-sm outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
-        />
+    <div className="sl-card mb-6 flex flex-col gap-3 p-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex min-w-[220px] flex-1 flex-col gap-1">
+          <span className="sl-label text-[var(--muted)]">Search</span>
+          <input
+            type="search"
+            value={filters.q}
+            onChange={(e) => onChange({ q: e.target.value })}
+            placeholder="Captions or handles…"
+            className="sl-input"
+          />
+        </label>
 
         <Select
-          label="Sort"
+          label="Sort by"
           value={filters.sort}
           onChange={(v) => onChange({ sort: v as SortKey })}
           title={activeSort?.hint}
@@ -102,7 +105,15 @@ export default function Toolbar({
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <Toggle
+          active={filters.outliersOnly}
+          hot
+          onClick={() => onChange({ outliersOnly: !filters.outliersOnly })}
+          title="Posts whose views are at least 3x the account's own median"
+        >
+          Outliers only
+        </Toggle>
         <Toggle
           active={filters.type === "reels"}
           onClick={() =>
@@ -112,20 +123,13 @@ export default function Toolbar({
           Reels only
         </Toggle>
         <Toggle
-          active={filters.outliersOnly}
-          onClick={() => onChange({ outliersOnly: !filters.outliersOnly })}
-          title="Posts whose views are at least 3x the account's own median"
-        >
-          🔥 Outliers
-        </Toggle>
-        <Toggle
           active={filters.watchlistOnly}
           onClick={() => onChange({ watchlistOnly: !filters.watchlistOnly })}
         >
           ★ Saved
         </Toggle>
 
-        <span className="nums ml-auto text-xs text-[var(--muted)]">
+        <span className="sl-label nums ml-auto text-[var(--muted)]">
           {loading ? "loading…" : `${total.toLocaleString()} posts`}
         </span>
       </div>
@@ -147,13 +151,13 @@ function Select({
   title?: string;
 }) {
   return (
-    <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-      <span className="sr-only sm:not-sr-only">{label}</span>
+    <label className="flex flex-col gap-1">
+      <span className="sl-label text-[var(--muted)]">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         title={title}
-        className="rounded-md border bg-[var(--surface-2)] px-2 py-1.5 text-sm text-[var(--fg)] outline-none focus:border-[var(--accent)]"
+        className="sl-input cursor-pointer pr-8"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -170,11 +174,13 @@ function Toggle({
   onClick,
   children,
   title,
+  hot,
 }: {
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
   title?: string;
+  hot?: boolean;
 }) {
   return (
     <button
@@ -182,11 +188,7 @@ function Toggle({
       onClick={onClick}
       aria-pressed={active}
       title={title}
-      className={`rounded-md border px-2.5 py-1 text-xs font-medium transition ${
-        active
-          ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-          : "text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--fg)]"
-      }`}
+      className={`sl-pill ${hot ? "sl-pill-hot" : ""}`}
     >
       {children}
     </button>

@@ -1,26 +1,30 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import type { Competitor, Stats } from "@/lib/types";
+import type { Competitor, Me } from "@/lib/types";
 import { compactNumber, relativeTime } from "@/lib/format";
+import { api, ApiError, postJson } from "@/lib/client";
+import CollectorCard from "@/components/CollectorCard";
 
-export default function CompetitorsPage() {
+export default function AccountsPage() {
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{
     kind: "ok" | "err";
     text: string;
+    upgrade?: boolean;
   } | null>(null);
 
   const refresh = useCallback(async () => {
-    const [c, s] = await Promise.all([
-      fetch("/api/competitors").then((r) => r.json()),
-      fetch("/api/stats").then((r) => r.json()),
+    const [c, m] = await Promise.all([
+      api<{ competitors: Competitor[] }>("/api/competitors"),
+      api<Me>("/api/me"),
     ]);
     setCompetitors(c.competitors ?? []);
-    setStats(s);
+    setMe(m);
   }, []);
 
   useEffect(() => {
@@ -34,104 +38,168 @@ export default function CompetitorsPage() {
     setBusy(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/competitors", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: input }),
+      const res = await postJson<{ pointsSpent: number }>("/api/competitors", {
+        username: input,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Could not add that account.");
-
       setInput("");
       setMessage({
         kind: "ok",
-        text: "Added. Its post history is fetched on the next poll cycle.",
+        text:
+          res.pointsSpent > 0
+            ? `Added. ${res.pointsSpent} points spent. Their reels will appear shortly.`
+            : "Added. Their reels will appear shortly.",
       });
       await refresh();
     } catch (err) {
+      const apiErr = err instanceof ApiError ? err : null;
       setMessage({
         kind: "err",
         text: err instanceof Error ? err.message : "Something went wrong.",
+        upgrade:
+          apiErr?.code === "account_limit" || apiErr?.code === "no_points",
       });
     } finally {
       setBusy(false);
     }
   }
 
-  async function togglePaused(c: Competitor) {
-    await fetch(`/api/competitors/${c.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_active: !c.is_active }),
-    });
-    await refresh();
-  }
-
   async function remove(c: Competitor) {
-    // Deleting cascades to every post, metric snapshot and saved idea.
     const ok = window.confirm(
-      `Remove @${c.username}? This also deletes its ${c.post_count} stored posts and any saved ideas from it.`
+      `Stop tracking @${c.username}? Points spent adding it are not refunded, and adding it again costs points again. Reels you saved stay on your board.`
     );
     if (!ok) return;
-    await fetch(`/api/competitors/${c.id}`, { method: "DELETE" });
-    await refresh();
+    try {
+      await api(`/api/competitors/${c.id}`, { method: "DELETE" });
+      await refresh();
+    } catch (err) {
+      setMessage({
+        kind: "err",
+        text: err instanceof Error ? err.message : "Could not remove that.",
+      });
+    }
   }
+
+  const limits = me?.user.limits;
+  const atLimit = !!limits && competitors.length >= limits.maxAccounts;
 
   return (
     <>
-      <h1 className="mb-1 text-lg font-semibold">Tracked competitors</h1>
-      <p className="mb-4 text-sm text-[var(--muted)]">
-        Active accounts are re-checked every poll cycle. Pausing keeps the data
-        you have already collected but stops spending on new scrapes.
+      <p className="sl-label text-[var(--muted)]">
+        <span style={{ color: "var(--hot)" }}>●</span> 02 · Accounts
+      </p>
+      <h1 className="mt-2 text-4xl font-extrabold leading-[1.02] tracking-tight sm:text-5xl">
+        Who you&apos;re <span className="sl-kw">watching.</span>
+      </h1>
+      <p className="mb-6 mt-3 max-w-xl text-base text-[var(--muted)]">
+        Tracked accounts are refreshed automatically
+        {limits ? ` about every ${limits.refreshHours} hours` : ""}, and you see
+        up to their latest {limits?.reelsPerAccount ?? 200} reels.
       </p>
 
-      <form onSubmit={addCompetitor} className="mb-3 flex flex-wrap gap-2">
+      {me && (me.user.plan === "free" || me.user.isAdmin) && (
+        <CollectorCard onChange={refresh} />
+      )}
+
+      {me && limits && (
+        <div className="mb-4 flex flex-wrap gap-4">
+          <Meter
+            label="Accounts"
+            value={competitors.length}
+            max={limits.maxAccounts}
+          />
+          <div className="sl-card px-4 py-3">
+            <div className="nums text-2xl font-extrabold leading-none">
+              {me.user.isAdmin ? "∞" : me.user.points}
+              <span className="ml-1 text-sm font-bold text-[var(--muted)]">
+                pts
+              </span>
+            </div>
+            <div className="sl-label mt-1.5 text-[10px] text-[var(--muted)]">
+              {me.user.isAdmin || me.user.ownKey
+                ? "Adding accounts is free"
+                : `Adding an account costs ${me.addAccountCost} pts`}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <form
+        onSubmit={addCompetitor}
+        className="sl-card mb-4 flex flex-wrap gap-3 p-4"
+      >
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="handle, @handle, or instagram.com/handle"
-          className="min-w-[260px] flex-1 rounded-md border bg-[var(--surface-2)] px-3 py-2 text-sm outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+          aria-label="Instagram handle to track"
+          disabled={atLimit}
+          className="sl-input min-w-[260px] flex-1"
         />
         <button
           type="submit"
-          disabled={busy || !input.trim()}
-          className="rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition disabled:opacity-50"
+          disabled={busy || !input.trim() || atLimit}
+          className="sl-btn sl-btn-primary"
         >
           {busy ? "Adding…" : "Track account"}
         </button>
+        {atLimit && (
+          <p className="w-full text-sm font-semibold text-[var(--muted)]">
+            You&apos;re at your plan&apos;s limit. Remove an account to add
+            another, or{" "}
+            <Link href="/account" className="text-[var(--ink)] underline">
+              see plans
+            </Link>
+            .
+          </p>
+        )}
       </form>
 
       {message && (
         <div
-          className="mb-4 rounded-lg border bg-[var(--surface)] p-3 text-sm"
+          role={message.kind === "err" ? "alert" : "status"}
+          className="sl-card mb-4 p-3 text-sm font-semibold"
           style={{
-            borderColor:
-              message.kind === "err" ? "var(--hot)" : "var(--cool)",
+            background: message.kind === "err" ? "var(--hot)" : "var(--cool)",
+            color: message.kind === "err" ? "#fff" : "var(--ink)",
           }}
         >
           {message.text}
+          {message.upgrade && (
+            <>
+              {" "}
+              <Link href="/account" className="underline">
+                See plans
+              </Link>
+            </>
+          )}
         </div>
       )}
 
       {competitors.length === 0 ? (
-        <div className="rounded-xl border bg-[var(--surface)] p-10 text-center text-sm text-[var(--muted)]">
+        <div className="sl-card p-12 text-center text-sm text-[var(--muted)]">
           Nothing tracked yet. Add a handle above.
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border bg-[var(--surface)]">
+        <div className="sl-card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b text-left text-xs uppercase tracking-wide text-[var(--muted)]">
+              <tr className="sl-label bg-[var(--ink)] text-left text-[10px] text-white">
                 <Th>Account</Th>
                 <Th right>Posts</Th>
                 <Th right>Last 7d</Th>
-                <Th right title="Median views across recent mature reels — the baseline outliers are measured against">
+                <Th
+                  right
+                  title="Median views across recent mature reels — the baseline outliers are measured against"
+                >
                   Median views
                 </Th>
-                <Th right title="Posts in the last 30 days at or above the outlier threshold">
+                <Th
+                  right
+                  title="Posts in the last 30 days at or above the outlier threshold"
+                >
                   Outliers
                 </Th>
-                <Th right>Last checked</Th>
+                <Th right>Updated</Th>
                 <Th right>Actions</Th>
               </tr>
             </thead>
@@ -139,33 +207,25 @@ export default function CompetitorsPage() {
               {competitors.map((c) => (
                 <tr
                   key={c.id}
-                  className="border-b last:border-0 hover:bg-[var(--surface-2)]"
+                  className="border-b border-[var(--line)] last:border-0 hover:bg-[var(--surface-2)]"
                 >
-                  <td className="px-3 py-2.5">
+                  <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <a
                         href={`https://www.instagram.com/${c.username}/`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="font-medium hover:text-[var(--accent)]"
+                        className="font-bold underline-offset-2 hover:underline"
                       >
                         @{c.username}
                       </a>
-                      {!c.is_active && (
-                        <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] uppercase text-[var(--muted)]">
-                          paused
-                        </span>
-                      )}
-                      {!c.backfilled_at && (
+                      {!c.last_scraped_at && (
                         <span
-                          className="rounded px-1.5 py-0.5 text-[10px] uppercase"
-                          style={{
-                            background: "var(--accent)",
-                            color: "#fff",
-                          }}
-                          title="History has not been fetched yet; this happens on the next poll"
+                          className="sl-tag"
+                          style={{ background: "var(--warm)" }}
+                          title="We're collecting this account's reels now"
                         >
-                          pending
+                          collecting
                         </span>
                       )}
                     </div>
@@ -184,7 +244,10 @@ export default function CompetitorsPage() {
                   </Td>
                   <Td right>
                     {Number(c.outliers_last_30d) > 0 ? (
-                      <span style={{ color: "var(--hot)" }}>
+                      <span
+                        className="sl-tag"
+                        style={{ background: "var(--hot)", color: "#fff" }}
+                      >
                         {c.outliers_last_30d}
                       </span>
                     ) : (
@@ -196,23 +259,14 @@ export default function CompetitorsPage() {
                       {relativeTime(c.last_scraped_at)}
                     </span>
                   </Td>
-                  <td className="px-3 py-2.5 text-right">
-                    <div className="flex justify-end gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => togglePaused(c)}
-                        className="rounded border px-2 py-1 text-xs transition hover:border-[var(--accent)]"
-                      >
-                        {c.is_active ? "Pause" : "Resume"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => remove(c)}
-                        className="rounded border px-2 py-1 text-xs transition hover:border-[var(--hot)] hover:text-[var(--hot)]"
-                      >
-                        Remove
-                      </button>
-                    </div>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      onClick={() => remove(c)}
+                      className="sl-btn sl-btn-sm"
+                    >
+                      Remove
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -221,73 +275,48 @@ export default function CompetitorsPage() {
         </div>
       )}
 
-      <RunHistory stats={stats} />
+      <p className="mt-4 text-xs text-[var(--muted)]">
+        Outliers are reels with at least {3}× their account&apos;s median views.
+      </p>
     </>
   );
 }
 
-function RunHistory({ stats }: { stats: Stats | null }) {
-  if (!stats) return null;
-
-  return (
-    <section className="mt-6">
-      <h2 className="mb-2 text-sm font-semibold">Collection status</h2>
-      <div className="grid gap-2 sm:grid-cols-3">
-        <Card
-          label="Apify spend, last 24h"
-          value={`$${Number(stats.spend?.last_24h ?? 0).toFixed(2)}`}
-        />
-        <Card
-          label="Apify spend, last 30d"
-          value={`$${Number(stats.spend?.last_30d ?? 0).toFixed(2)}`}
-        />
-        <Card
-          label="Last check"
-          value={
-            stats.lastRun
-              ? `${stats.lastRun.tier} · ${stats.lastRun.status}`
-              : "never run"
-          }
-          sub={
-            stats.lastRun
-              ? relativeTime(stats.lastRun.started_at)
-              : "trigger /api/cron to start"
-          }
-        />
-      </div>
-      {stats.lastRun?.error && (
-        <p
-          className="mt-2 rounded-lg border p-3 text-xs"
-          style={{ borderColor: "var(--hot)" }}
-        >
-          Last error: {stats.lastRun.error}
-        </p>
-      )}
-      <p className="mt-3 text-xs text-[var(--muted)]">
-        Outlier threshold is {stats.settings.outlierThreshold}× the account
-        median. Recent posts are re-checked every cycle; the{" "}
-        {stats.settings.warmEveryHours}-hour sweep covers older ones.
-      </p>
-    </section>
-  );
-}
-
-function Card({
+function Meter({
   label,
   value,
-  sub,
+  max,
 }: {
   label: string;
-  value: string;
-  sub?: string;
+  value: number;
+  max: number;
 }) {
+  const pct = Math.min(100, Math.round((value / max) * 100));
   return (
-    <div className="rounded-xl border bg-[var(--surface)] px-3 py-2">
-      <div className="nums text-base font-semibold">{value}</div>
-      <div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">
-        {label}
+    <div className="sl-card min-w-[220px] px-4 py-3">
+      <div className="nums text-2xl font-extrabold leading-none">
+        {value}
+        <span className="text-sm font-bold text-[var(--muted)]"> / {max}</span>
       </div>
-      {sub && <div className="text-[11px] text-[var(--muted)]">{sub}</div>}
+      <div
+        className="mt-2 h-2.5 overflow-hidden rounded-full border-2 bg-white"
+        role="progressbar"
+        aria-valuenow={value}
+        aria-valuemin={0}
+        aria-valuemax={max}
+        aria-label={label}
+      >
+        <div
+          className="h-full"
+          style={{
+            width: `${pct}%`,
+            background: pct >= 100 ? "var(--hot)" : "var(--accent)",
+          }}
+        />
+      </div>
+      <div className="sl-label mt-1.5 text-[10px] text-[var(--muted)]">
+        {label} tracked
+      </div>
     </div>
   );
 }
@@ -304,7 +333,7 @@ function Th({
   return (
     <th
       title={title}
-      className={`px-3 py-2 font-medium ${right ? "text-right" : ""}`}
+      className={`px-4 py-3 font-semibold ${right ? "text-right" : ""}`}
     >
       {children}
     </th>
@@ -319,8 +348,6 @@ function Td({
   right?: boolean;
 }) {
   return (
-    <td className={`nums px-3 py-2.5 ${right ? "text-right" : ""}`}>
-      {children}
-    </td>
+    <td className={`nums px-4 py-3 ${right ? "text-right" : ""}`}>{children}</td>
   );
 }

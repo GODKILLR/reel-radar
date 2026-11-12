@@ -1,27 +1,28 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, isAuthEnabled, isValidSession } from "@/lib/auth";
+import { SESSION_COOKIE, isValidSession } from "@/lib/auth";
 
 /**
- * Gates the dashboard behind the shared password.
+ * Sends signed-out visitors to /login. This only checks that the session
+ * cookie is genuine and unexpired (the edge cannot reach Postgres); every API
+ * route then loads the real user and enforces plan limits itself.
  *
- * Exempt paths carry their own secret and are called by machines that cannot
- * hold a session cookie:
- *   /api/cron            - the scheduler, authed by CRON_SECRET
- *   /api/webhooks/apify  - Apify's callback, authed by WEBHOOK_SECRET
- *   /api/admin/migrate   - one-shot setup, authed by CRON_SECRET
+ * Exempt paths are either public pages or carry their own secret and are called
+ * by machines that cannot hold a session cookie:
+ *   /api/cron           - the scheduler, authed by CRON_SECRET
+ *   /api/hooks/         - the collector's callback, authed by a single-use
+ *                         per-run token (not a global secret)
+ *   /api/admin/migrate  - one-shot setup, authed by CRON_SECRET
  */
 const EXEMPT_PREFIXES = [
   "/api/cron",
-  "/api/webhooks/",
-  "/api/admin/",
+  "/api/hooks/",
+  "/api/admin/migrate",
   "/login",
-  "/api/auth",
+  "/signup",
+  "/api/auth/",
 ];
 
 export async function middleware(req: NextRequest) {
-  // No password set means local development; leave everything open.
-  if (!isAuthEnabled()) return NextResponse.next();
-
   const { pathname } = req.nextUrl;
   if (EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) {
     return NextResponse.next();
@@ -33,7 +34,7 @@ export async function middleware(req: NextRequest) {
   // API calls get a 401 rather than an HTML redirect, so fetch() in the
   // dashboard fails loudly instead of parsing a login page as JSON.
   if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Please sign in." }, { status: 401 });
   }
 
   const login = req.nextUrl.clone();

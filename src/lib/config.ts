@@ -39,8 +39,10 @@ export const config = {
 
   /** One-time deep fetch when a competitor is first added. */
   backfill: {
-    windowDays: num("BACKFILL_WINDOW_DAYS", 180),
-    limitPerProfile: num("BACKFILL_LIMIT", 150),
+    // 200 matches the free plan's depth ("latest 200 reels per account"), so a
+    // new account always has enough history for every plan's first view.
+    windowDays: num("BACKFILL_WINDOW_DAYS", 365),
+    limitPerProfile: num("BACKFILL_LIMIT", 200),
   },
 
   metrics: {

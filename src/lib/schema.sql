@@ -99,6 +99,86 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
 CREATE INDEX IF NOT EXISTS scrape_runs_apify_idx ON scrape_runs (apify_run_id);
 CREATE INDEX IF NOT EXISTS scrape_runs_started_idx ON scrape_runs (started_at DESC);
 
+-- ---------------------------------------------------------------------------
+-- Multi-user (additive). Posts, metrics and outlier scores stay SHARED: if 40
+-- users track the same account it is scraped once. What is per-user is who
+-- tracks what, their saved ideas, and their points.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS users (
+  id              BIGSERIAL PRIMARY KEY,
+  email           TEXT NOT NULL UNIQUE,          -- stored lower-case
+  password_hash   TEXT NOT NULL,
+  name            TEXT,
+  plan            TEXT NOT NULL DEFAULT 'free',  -- free | pro | studio | admin
+  points          INTEGER NOT NULL DEFAULT 0,
+  points_reset_at TIMESTAMPTZ NOT NULL DEFAULT (now() + interval '1 month'),
+  is_admin        BOOLEAN NOT NULL DEFAULT FALSE,
+  failed_logins   INTEGER NOT NULL DEFAULT 0,
+  locked_until    TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_login_at   TIMESTAMPTZ
+);
+
+-- Which accounts each user tracks.
+CREATE TABLE IF NOT EXISTS user_competitors (
+  user_id       BIGINT  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  competitor_id INTEGER NOT NULL REFERENCES competitors(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, competitor_id)
+);
+CREATE INDEX IF NOT EXISTS user_competitors_comp_idx
+  ON user_competitors (competitor_id);
+
+-- Per-user saved ideas. (The old global `watchlist` table is left in place.)
+CREATE TABLE IF NOT EXISTS user_watchlist (
+  user_id   BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shortcode TEXT   NOT NULL REFERENCES posts(shortcode) ON DELETE CASCADE,
+  status    TEXT   NOT NULL DEFAULT 'idea',
+  note      TEXT,
+  added_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, shortcode)
+);
+
+-- Every change to a balance, so points can always be explained and audited.
+CREATE TABLE IF NOT EXISTS points_ledger (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  delta         INTEGER NOT NULL,
+  balance_after INTEGER NOT NULL,
+  reason        TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS points_ledger_user_idx
+  ON points_ledger (user_id, created_at DESC);
+
+-- "Connect your own collector": a user can supply their own Apify API token so
+-- their accounts are collected on their credit, not ours. The token is stored
+-- ENCRYPTED (AES-256-GCM, bound to the user id) and is never sent back to the
+-- browser; only the last 4 characters are kept in the clear for display.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_key_enc    TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_key_last4  TEXT;
+-- ok | out_of_credit | invalid (NULL = no key connected)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_status     TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_checked_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_credit_left NUMERIC;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS collector_resets_at  TIMESTAMPTZ;
+
+-- Who paid for a collection run (NULL = the platform), and the single-use
+-- token that authorises that run's completion callback. The callback URL is
+-- visible inside a user's own collector account, so it must never carry a
+-- global secret.
+ALTER TABLE scrape_runs
+  ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE scrape_runs ADD COLUMN IF NOT EXISTS hook_nonce TEXT;
+CREATE INDEX IF NOT EXISTS scrape_runs_nonce_idx ON scrape_runs (hook_nonce)
+  WHERE hook_nonce IS NOT NULL;
+
+-- Accounts featured in the Discover tab. Off by default: nothing is shown to
+-- other users until an admin turns it on.
+ALTER TABLE competitors
+  ADD COLUMN IF NOT EXISTS is_curated BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Dedupe table so a reel that stays viral across many polls alerts only once.
 CREATE TABLE IF NOT EXISTS alerts (
   id         SERIAL PRIMARY KEY,

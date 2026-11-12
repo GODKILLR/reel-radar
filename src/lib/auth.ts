@@ -1,22 +1,23 @@
 /**
- * Single-password gate for the dashboard.
+ * Signed session cookies for user accounts.
  *
- * The app is a private research tool with no multi-user story, so a shared
- * password is the right weight: it keeps the deployment off the open internet
- * without dragging in an auth provider. The cookie carries an expiry and an
- * HMAC over it, so it cannot be forged or replayed past its lifetime.
+ * The cookie is `<userId>.<expiresAt>.<hmac>`. It is stateless on purpose: the
+ * edge middleware cannot query Postgres, and verifying a signature is all it
+ * needs to decide "send them to /login or let them through". Route handlers
+ * then load the real user row, so a deleted account stops working immediately.
  *
  * Runs in the edge middleware, so it uses Web Crypto rather than node:crypto.
+ * Password hashing (node-only) lives in password.ts.
  */
 
 export const SESSION_COOKIE = "rr_session";
 const SESSION_DAYS = 30;
 
 function keyMaterial(): string {
-  // Reuse WEBHOOK_SECRET as the signing key; it is already a 32-byte random
-  // value present in every environment. Falls back to the password itself so a
-  // misconfigured deploy fails closed rather than signing with an empty key.
-  return process.env.WEBHOOK_SECRET || process.env.DASHBOARD_PASSWORD || "";
+  // Fail closed: with no key configured nothing can be signed or verified.
+  const key = process.env.AUTH_SECRET || process.env.WEBHOOK_SECRET || "";
+  if (!key) throw new Error("AUTH_SECRET (or WEBHOOK_SECRET) is not set");
+  return key;
 }
 
 async function hmac(message: string): Promise<string> {
@@ -44,39 +45,37 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-export async function createSessionValue(): Promise<string> {
+export async function createSessionValue(userId: number): Promise<string> {
   const expires = Date.now() + SESSION_DAYS * 86_400_000;
-  return `${expires}.${await hmac(String(expires))}`;
+  const payload = `${userId}.${expires}`;
+  return `${payload}.${await hmac(payload)}`;
+}
+
+/** Returns the user id if the cookie is genuine and unexpired, else null. */
+export async function readSession(
+  value: string | undefined
+): Promise<number | null> {
+  if (!value) return null;
+
+  const parts = value.split(".");
+  if (parts.length !== 3) return null;
+  const [uid, expires, signature] = parts;
+
+  if (!/^\d{1,12}$/.test(uid) || !/^\d{10,16}$/.test(expires)) return null;
+  if (Number(expires) < Date.now()) return null;
+
+  try {
+    const expected = await hmac(`${uid}.${expires}`);
+    return timingSafeEqual(signature, expected) ? Number(uid) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function isValidSession(
   value: string | undefined
 ): Promise<boolean> {
-  if (!value) return false;
-
-  const sep = value.lastIndexOf(".");
-  if (sep <= 0) return false;
-
-  const expires = value.slice(0, sep);
-  const signature = value.slice(sep + 1);
-
-  const expiresAt = Number(expires);
-  if (!Number.isFinite(expiresAt) || expiresAt < Date.now()) return false;
-
-  return timingSafeEqual(signature, await hmac(expires));
-}
-
-/** Whether a password gate is configured at all. */
-export function isAuthEnabled(): boolean {
-  return Boolean(process.env.DASHBOARD_PASSWORD);
-}
-
-export async function checkPassword(candidate: string): Promise<boolean> {
-  const expected = process.env.DASHBOARD_PASSWORD ?? "";
-  if (!expected) return false;
-  // Hash both sides first so the comparison length does not reveal the
-  // password length.
-  return timingSafeEqual(await hmac(`pw:${candidate}`), await hmac(`pw:${expected}`));
+  return (await readSession(value)) !== null;
 }
 
 export const SESSION_MAX_AGE = SESSION_DAYS * 86_400;
