@@ -44,3 +44,40 @@ export function postJson<T = unknown>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
 }
+
+// ---------- collection on request ----------
+
+export interface CollectResponse {
+  outcome:
+    | "started"
+    | "nothing_due"
+    | "in_progress"
+    | "cooldown"
+    | "no_key"
+    | "invalid"
+    | "out_of_credit"
+    | "unreachable";
+  message: string;
+  launched: { tier: string; accounts: number }[];
+}
+
+/** Ask the server to collect this user's accounts now, on their own key. */
+export function collectNow(force = false): Promise<CollectResponse> {
+  return postJson<CollectResponse>("/api/collect", { force });
+}
+
+/**
+ * Quietly checks, at most once per 10 minutes per browser tab session, whether
+ * anything is due. Used when a page opens so data stays fresh without a timer.
+ */
+export async function autoCollect(): Promise<CollectResponse | null> {
+  try {
+    const key = "rr_collect_at";
+    const last = Number(sessionStorage.getItem(key) ?? 0);
+    if (Date.now() - last < 10 * 60_000) return null;
+    sessionStorage.setItem(key, String(Date.now()));
+    return await collectNow(false);
+  } catch {
+    return null;
+  }
+}

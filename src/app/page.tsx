@@ -6,7 +6,7 @@ import PostCard from "@/components/PostCard";
 import Toolbar, { type Filters } from "@/components/Toolbar";
 import type { Competitor, Post, Stats } from "@/lib/types";
 import { compactNumber, relativeTime } from "@/lib/format";
-import { api } from "@/lib/client";
+import { api, autoCollect } from "@/lib/client";
 import { useWatch } from "@/lib/useWatch";
 
 const PAGE_SIZE = 60;
@@ -34,6 +34,19 @@ export default function FeedPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [audioId, setAudioId] = useState<string | null>(null);
   const [audioLabel, setAudioLabel] = useState<string | null>(null);
+  const [collectNote, setCollectNote] = useState<string | null>(null);
+
+  // Opening the feed checks whether any account is due and collects it on the
+  // user's own key, so data stays fresh without relying on a timer.
+  useEffect(() => {
+    void (async () => {
+      const c = await autoCollect();
+      if (c?.outcome === "started") setCollectNote(c.message);
+      else if (c?.outcome === "out_of_credit" || c?.outcome === "invalid") {
+        setCollectNote(c.message);
+      }
+    })();
+  }, []);
 
   // Debounce the search box so typing does not fire a query per keystroke.
   useEffect(() => {
@@ -137,6 +150,12 @@ export default function FeedPage() {
           idea while it&apos;s still working.
         </p>
       </section>
+
+      {collectNote && (
+        <div role="status" className="sl-card mb-4 p-3 text-sm font-semibold" style={{ background: "var(--cool)" }}>
+          {collectNote}
+        </div>
+      )}
 
       <StatStrip stats={stats} />
 

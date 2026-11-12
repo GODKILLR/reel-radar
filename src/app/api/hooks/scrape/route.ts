@@ -144,6 +144,16 @@ export async function POST(req: NextRequest) {
 
     const result = await ingestPosts(normalized);
 
+    // Mark every account this run covered as collected, even one that returned
+    // nothing (private, empty). Without this it would look "never collected"
+    // and be fetched again and again on the user's credit.
+    if (run.usernames && run.usernames.length > 0) {
+      await query(
+        `UPDATE competitors SET last_scraped_at = now() WHERE username = ANY($1::text[])`,
+        [run.usernames]
+      );
+    }
+
     // A backfill drags in an account's whole history at once, so every past
     // hit crosses the threshold simultaneously. Claim those silently and only
     // notify on outliers discovered by later polls.

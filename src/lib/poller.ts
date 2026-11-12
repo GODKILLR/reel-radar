@@ -195,6 +195,50 @@ async function launch(
   return { tier, runId, usernames, estimatedCostUsd, ownerUserId: ctx.ownerUserId };
 }
 
+/** How long a first collection may stay unanswered before we try again. */
+const BACKFILL_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * Where an account is in its life:
+ *  - new:         never collected (or its first collection got lost): needs history
+ *  - pending:     history fetch is in flight right now - hands off, nobody else
+ *                 may start a refresh or sweep for it yet
+ *  - established: has data; refreshed on schedule
+ */
+export function accountPhase(
+  c: Pick<Competitor, "backfilled_at" | "last_scraped_at">,
+  now: number
+): "new" | "pending" | "established" {
+  if (c.last_scraped_at) return "established";
+  if (!c.backfilled_at) return "new";
+  return now - new Date(c.backfilled_at).getTime() > BACKFILL_TIMEOUT_MS
+    ? "new"
+    : "pending";
+}
+
+/** Atomically marks accounts as "history fetch in progress"; returns the ones WE got. */
+async function claimBackfill(ids: number[]): Promise<number[]> {
+  const rows = await query<{ id: number }>(
+    `
+    UPDATE competitors SET backfilled_at = now()
+    WHERE id = ANY($1::int[])
+      AND (backfilled_at IS NULL
+           OR (last_scraped_at IS NULL
+               AND backfilled_at < now() - interval '30 minutes'))
+    RETURNING id
+    `,
+    [ids]
+  );
+  return rows.map((r) => r.id);
+}
+
+async function unclaimBackfill(ids: number[]): Promise<void> {
+  await query(
+    `UPDATE competitors SET backfilled_at = NULL WHERE id = ANY($1::int[])`,
+    [ids]
+  );
+}
+
 /** Last time a (non-failed) warm sweep started for this payer. */
 async function lastWarmStart(ownerUserId: number | null): Promise<number | null> {
   const row = await queryOne<{ started_at: string }>(
@@ -218,35 +262,55 @@ async function lastWarmStart(ownerUserId: number | null): Promise<number | null>
 async function runPool(
   pool: Competitor[],
   ctx: Ctx,
-  opts: { force?: Tier }
+  opts: {
+    force?: Tier;
+    /** Refresh every established account now, not just the ones that are due. */
+    forceHot?: boolean;
+    /** Skip the refresh tier (used to throttle repeated manual refreshes). */
+    skipHot?: boolean;
+  }
 ): Promise<LaunchedRun[]> {
   const launched: LaunchedRun[] = [];
   if (pool.length === 0) return launched;
 
   const now = Date.now();
-  const needsBackfill = pool.filter((c) => !c.backfilled_at);
-  const established = pool.filter((c) => c.backfilled_at);
-  const dueNow = opts.force
-    ? established
-    : established.filter((c) => isDue(c, now));
+  const needsBackfill = pool.filter((c) => accountPhase(c, now) === "new");
+  const established = pool.filter((c) => accountPhase(c, now) === "established");
+  const dueNow = opts.skipHot
+    ? []
+    : opts.force || opts.forceHot
+      ? established
+      : established.filter((c) => isDue(c, now));
 
   // New accounts get their history first; they'd show an empty feed otherwise.
   const backfillTargets =
     opts.force === "backfill" ? pool : needsBackfill;
   if (backfillTargets.length > 0) {
-    launched.push(
-      await launch(
-        "backfill",
-        backfillTargets,
-        config.backfill.windowDays,
-        config.backfill.limitPerProfile,
-        ctx
-      )
-    );
-    await query(
-      `UPDATE competitors SET backfilled_at = now() WHERE id = ANY($1::int[])`,
-      [backfillTargets.map((c) => c.id)]
-    );
+    // Claim the accounts atomically BEFORE launching. Two things can ask for
+    // the same new account at once (the user's own request and the scheduler,
+    // or two users tracking it), and only one of them may pay for its history.
+    // A forced re-backfill deliberately skips the claim.
+    const ids = backfillTargets.map((c) => c.id);
+    const claimed =
+      opts.force === "backfill" ? ids : await claimBackfill(ids);
+    const targets = backfillTargets.filter((c) => claimed.includes(c.id));
+    if (targets.length > 0) {
+      try {
+        launched.push(
+          await launch(
+            "backfill",
+            targets,
+            config.backfill.windowDays,
+            config.backfill.limitPerProfile,
+            ctx
+          )
+        );
+      } catch (err) {
+        // The run never started: hand the accounts back so they retry later.
+        if (opts.force !== "backfill") await unclaimBackfill(targets.map((c) => c.id));
+        throw err;
+      }
+    }
   }
 
   if (established.length === 0) return launched;
@@ -382,4 +446,170 @@ export async function runPollCycle(
   }
 
   return launched;
+}
+
+// ---------------------------------------------------------------------------
+// Collection on request. The scheduler is a safety net, not the engine: when a
+// user adds an account, opens the app, or presses "Refresh now", their own
+// accounts are collected right away on their own key.
+// ---------------------------------------------------------------------------
+
+/** Minimum gap between two *refreshes* for one user (new accounts are exempt). */
+const REFRESH_COOLDOWN_MINUTES = 15;
+
+export type CollectOutcome =
+  | "started" // at least one run was queued
+  | "nothing_due" // everything is already fresh
+  | "in_progress" // a collection for this user is already running
+  | "cooldown" // refreshed a moment ago
+  | "no_key" // no key connected
+  | "invalid" // the key no longer works
+  | "out_of_credit" // the key has no credit left this month
+  | "unreachable"; // could not reach the collector; try again
+
+export interface CollectResult {
+  outcome: CollectOutcome;
+  /** What was queued, by tier. */
+  launched: { tier: Tier; accounts: number }[];
+}
+
+/**
+ * The accounts that THIS user's key is responsible for: theirs, minus the ones
+ * we collect ourselves (featured accounts and admins' accounts).
+ */
+async function loadUserPool(userId: number): Promise<Competitor[]> {
+  return query<Competitor>(
+    `
+    SELECT c.id, c.username, c.backfilled_at, c.last_scraped_at, c.is_curated,
+           (SELECT COUNT(*)::int
+              FROM user_competitors uc2 JOIN users u2 ON u2.id = uc2.user_id
+             WHERE uc2.competitor_id = c.id
+               AND u2.is_admin AND u2.collector_key_enc IS NULL)
+             AS platform_trackers,
+           '{}'::text[] AS key_owner_ids
+    FROM user_competitors uc
+    JOIN competitors c ON c.id = uc.competitor_id
+    WHERE uc.user_id = $1 AND c.is_active
+    ORDER BY c.id
+    `,
+    [userId]
+  ).then((rows) => rows.filter((c) => !c.is_curated && c.platform_trackers === 0));
+}
+
+/** A run for this user was queued recently and has not reported back yet. */
+async function runInProgress(userId: number): Promise<boolean> {
+  const row = await queryOne(
+    `
+    SELECT 1 FROM scrape_runs
+    WHERE owner_user_id = $1 AND status IN ('starting', 'started')
+      AND started_at > now() - interval '30 minutes'
+    LIMIT 1
+    `,
+    [userId]
+  );
+  return row !== null;
+}
+
+async function ranRecently(userId: number, minutes: number): Promise<boolean> {
+  const row = await queryOne(
+    `
+    SELECT 1 FROM scrape_runs
+    WHERE owner_user_id = $1 AND status <> 'failed'
+      AND started_at > now() - ($2::int * interval '1 minute')
+    LIMIT 1
+    `,
+    [userId, minutes]
+  );
+  return row !== null;
+}
+
+/**
+ * Collects whatever this user's accounts need, on their own key:
+ *  - new accounts: their history, immediately, every time;
+ *  - existing accounts: a refresh if they are due (or `force`), at most once
+ *    per cooldown;
+ *  - a weekly deeper sweep.
+ * Cheap to call repeatedly: when nothing is due it answers without touching the
+ * collector at all.
+ */
+export async function runForUser(
+  userId: number,
+  opts: { force?: boolean } = {}
+): Promise<CollectResult> {
+  const pool = await loadUserPool(userId);
+  const none: CollectResult = { outcome: "nothing_due", launched: [] };
+  if (pool.length === 0) return none;
+
+  const now = Date.now();
+  const needsBackfill = pool.filter((c) => accountPhase(c, now) === "new");
+  const established = pool.filter((c) => accountPhase(c, now) === "established");
+
+  const cooling = established.length > 0 && (await ranRecently(userId, REFRESH_COOLDOWN_MINUTES));
+  const refreshDue = opts.force
+    ? established.length > 0
+    : established.some((c) => isDue(c, now));
+  const hotWanted = refreshDue && !cooling;
+
+  const lastWarm = await lastWarmStart(userId);
+  const warmWanted =
+    established.length > 0 &&
+    (lastWarm === null ||
+      now - lastWarm > config.warm.everyHours * 3_600_000) &&
+    !cooling;
+
+  if (needsBackfill.length === 0 && !hotWanted && !warmWanted) {
+    if (await runInProgress(userId)) return { outcome: "in_progress", launched: [] };
+    return { outcome: cooling && refreshDue ? "cooldown" : "nothing_due", launched: [] };
+  }
+
+  // Something needs collecting: only now do we touch the user's key.
+  const token = await getUserToken(userId);
+  if (!token) {
+    const row = await queryOne<{ has: boolean }>(
+      `SELECT (collector_key_enc IS NOT NULL) AS has FROM users WHERE id = $1`,
+      [userId]
+    );
+    if (row?.has) await setStatus(userId, "invalid");
+    return { outcome: row?.has ? "invalid" : "no_key", launched: [] };
+  }
+
+  const check = await checkToken(token);
+  if (check.state === "unreachable") return { outcome: "unreachable", launched: [] };
+  await saveCheck(userId, check);
+  if (check.state === "invalid") return { outcome: "invalid", launched: [] };
+  if (check.state === "out_of_credit") return { outcome: "out_of_credit", launched: [] };
+
+  const ctx: Ctx = { ownerUserId: userId, token, creditLeft: check.creditLeftUsd };
+  try {
+    const runs = await runPool(pool, ctx, {
+      forceHot: !!opts.force,
+      skipHot: !hotWanted,
+    });
+    return {
+      outcome: runs.length > 0 ? "started" : "nothing_due",
+      launched: runs.map((r) => ({ tier: r.tier, accounts: r.usernames.length })),
+    };
+  } catch (err) {
+    if (err instanceof SkipPool) return { outcome: "out_of_credit", launched: [] };
+    if (err instanceof CollectorHttpError) {
+      if (err.status === 401) return { outcome: "invalid", launched: [] };
+      if (err.status === 402 || err.status === 403) return { outcome: "out_of_credit", launched: [] };
+    }
+    throw err;
+  }
+}
+
+/** Collects the platform's own accounts (featured + admins') right now. */
+export async function runPlatformNow(): Promise<LaunchedRun[]> {
+  const { platform } = splitPools(await loadCandidates());
+  try {
+    return await runPool(
+      platform,
+      { ownerUserId: null, token: config.apify.token, creditLeft: null },
+      {}
+    );
+  } catch (err) {
+    if (err instanceof SkipPool) return [];
+    throw err;
+  }
 }

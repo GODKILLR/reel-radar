@@ -30,6 +30,7 @@ import {
 import {
   splitPools,
   refreshHoursFor,
+  accountPhase,
   type Competitor,
 } from "../src/lib/poller";
 import {
@@ -239,6 +240,15 @@ async function main() {
   check("a user's account goes to that user's own key", pools.byUser.get("9")?.some((c) => c.username === "mine"), true);
   check("two key owners: deterministic single owner (lowest id)", [pools.byUser.get("9")?.some((c) => c.username === "twokeys"), pools.byUser.has("12")], [true, false]);
   check("account with no working key is in NO pool (never silently becomes our cost)", [pools.platform.some((c) => c.username === "paused"), [...pools.byUser.values()].flat().some((c) => c.username === "paused")], [false, false]);
+  // ---- account lifecycle: who may touch an account's first collection ----
+  const nowMs = Date.now();
+  const ago = (min: number) => new Date(nowMs - min * 60_000).toISOString();
+  check("never collected -> new", accountPhase({ backfilled_at: null, last_scraped_at: null }, nowMs), "new");
+  check("history fetch started 2 min ago -> pending (hands off)", accountPhase({ backfilled_at: ago(2), last_scraped_at: null }, nowMs), "pending");
+  check("history fetch started 29 min ago -> still pending", accountPhase({ backfilled_at: ago(29), last_scraped_at: null }, nowMs), "pending");
+  check("history fetch lost for 31 min -> new again (retry)", accountPhase({ backfilled_at: ago(31), last_scraped_at: null }, nowMs), "new");
+  check("has data -> established", accountPhase({ backfilled_at: ago(500), last_scraped_at: ago(10) }, nowMs), "established");
+  check("has data even if marker is recent -> established", accountPhase({ backfilled_at: ago(1), last_scraped_at: ago(1) }, nowMs), "established");
   check("normal accounts refresh daily", refreshHoursFor({ is_curated: false }), 24);
   check("featured accounts refresh every 6h", refreshHoursFor({ is_curated: true }), 6);
   check(

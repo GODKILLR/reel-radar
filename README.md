@@ -236,6 +236,16 @@ connected; paid plans are switched on by hand from `/admin` for now.
   user's broken key or empty credit only pauses their own accounts; those never
   fall back onto our bill. Our collection cost is therefore only the featured
   accounts.
+- **Collection happens on request, not on a timer.** Adding an account, opening
+  the feed or Accounts page, connecting a key, or pressing **Refresh now** calls
+  `POST /api/collect`, which collects whatever that user's accounts need on their
+  own key (new accounts immediately, stale ones when due, a weekly deeper sweep).
+  It is cheap to call: when nothing is due it answers without contacting the
+  collector. A refresh is throttled to once per 15 minutes per user, and a new
+  account's first fetch is claimed atomically so two requests can never pay for
+  it twice. The external scheduler (`/api/cron`) is now only a safety net for
+  featured accounts; admins can also press **Collect featured accounts now** on
+  `/admin`.
 - **Credit.** Before each run we read the user's remaining credit and skip runs
   that would not fit. Out-of-credit users are re-checked every cycle and resume
   by themselves when their credit renews.

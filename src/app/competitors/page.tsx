@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { Competitor, Me } from "@/lib/types";
 import { compactNumber, relativeTime } from "@/lib/format";
-import { api, ApiError, postJson } from "@/lib/client";
+import { api, ApiError, autoCollect, collectNow, postJson } from "@/lib/client";
 import CollectorCard from "@/components/CollectorCard";
 
 export default function AccountsPage() {
@@ -28,8 +28,53 @@ export default function AccountsPage() {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    void (async () => {
+      await refresh();
+      // Opening the page checks whether anything is due and collects it, so
+      // data stays fresh without relying on any timer.
+      const c = await autoCollect();
+      if (c?.outcome === "started") {
+        setMessage({ kind: "ok", text: c.message });
+        await refresh();
+      }
+    })();
   }, [refresh]);
+
+  // While reels are still being collected, check back every 15 seconds (for up
+  // to ten minutes) so they appear without the user reloading.
+  const waiting = competitors.some((c) => !c.last_scraped_at);
+  useEffect(() => {
+    if (!waiting) return;
+    let ticks = 0;
+    const t = setInterval(() => {
+      ticks += 1;
+      if (ticks > 40) clearInterval(t);
+      else void refresh();
+    }, 15_000);
+    return () => clearInterval(t);
+  }, [waiting, refresh]);
+
+  /** "Refresh now": collect everything, ignoring how fresh it already is. */
+  async function refreshNow() {
+    if (busy) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const c = await collectNow(true);
+      setMessage({
+        kind: c.outcome === "started" || c.outcome === "nothing_due" ? "ok" : "err",
+        text: c.message,
+      });
+      await refresh();
+    } catch (err) {
+      setMessage({
+        kind: "err",
+        text: err instanceof Error ? err.message : "Could not refresh.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function addCompetitor(e: React.FormEvent) {
     e.preventDefault();
@@ -40,10 +85,18 @@ export default function AccountsPage() {
     try {
       await postJson("/api/competitors", { username: input });
       setInput("");
-      setMessage({
-        kind: "ok",
-        text: "Added. Their reels appear after the next collection (usually within a few hours).",
-      });
+      // Start collecting straight away, on the user's own key.
+      let text = "Added.";
+      try {
+        const c = await collectNow();
+        text =
+          c.outcome === "started"
+            ? "Added. Collecting its reels now - they usually appear within a few minutes."
+            : `Added. ${c.message}`;
+      } catch {
+        text = "Added. Collection will start shortly.";
+      }
+      setMessage({ kind: "ok", text });
       await refresh();
     } catch (err) {
       const apiErr = err instanceof ApiError ? err : null;
@@ -92,7 +145,16 @@ export default function AccountsPage() {
         up to their latest {limits?.reelsPerAccount ?? 200} reels.
       </p>
 
-      {me && !me.user.isAdmin && <CollectorCard onChange={refresh} />}
+      {me && !me.user.isAdmin && (
+        <CollectorCard
+          onChange={async () => {
+            await refresh();
+            // A newly connected key starts collecting any waiting accounts.
+            await collectNow().catch(() => null);
+            await refresh();
+          }}
+        />
+      )}
 
       {me && limits && (
         <div className="mb-4 flex flex-wrap gap-4">
@@ -121,7 +183,16 @@ export default function AccountsPage() {
           disabled={busy || !input.trim() || atLimit || needsKey}
           className="sl-btn sl-btn-primary"
         >
-          {busy ? "Adding…" : "Track account"}
+          {busy ? "Working…" : "Track account"}
+        </button>
+        <button
+          type="button"
+          onClick={refreshNow}
+          disabled={busy || needsKey || competitors.length === 0}
+          className="sl-btn"
+          title="Fetch the latest reels for all your accounts now"
+        >
+          Refresh now
         </button>
         {needsKey && (
           <p className="w-full text-sm font-semibold text-[var(--muted)]">
@@ -209,9 +280,9 @@ export default function AccountsPage() {
                         <span
                           className="sl-tag"
                           style={{ background: "var(--warm)" }}
-                          title="We're collecting this account's reels now"
+                          title="Collecting this account's reels now. This usually takes a few minutes."
                         >
-                          collecting
+                          collecting…
                         </span>
                       )}
                     </div>

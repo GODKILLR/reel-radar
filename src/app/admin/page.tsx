@@ -92,6 +92,34 @@ export default function AdminPage() {
         Operations <span className="sl-kw">desk.</span>
       </h1>
 
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          className="sl-btn sl-btn-primary"
+          onClick={async () => {
+            try {
+              const r = await api<{ launched: { tier: string; accounts: number }[] }>(
+                "/api/admin/collect",
+                { method: "POST" }
+              );
+              setError(
+                r.launched.length
+                  ? `Started: ${r.launched.map((l) => `${l.tier} (${l.accounts})`).join(", ")}`
+                  : "Nothing due for featured accounts."
+              );
+              await load();
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Could not start.");
+            }
+          }}
+        >
+          Collect featured accounts now
+        </button>
+        <span className="text-xs text-[var(--muted)]">
+          Runs on our key. Never touches any user&apos;s key.
+        </span>
+      </div>
+
       {error && (
         <div
           role="alert"
