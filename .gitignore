@@ -10,3 +10,6 @@ next-env.d.ts
 
 # Vercel's link step adds a blanket .env* rule; the template must stay tracked.
 !.env.example
+
+# End-to-end harness scratch data
+.e2e-pg-data
