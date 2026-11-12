@@ -165,7 +165,7 @@ export default function CollectorCard({ onChange }: { onChange?: () => void }) {
     <form onSubmit={connect} className="sl-card sl-halftone mb-6 p-5" style={{ background: "var(--dark)", color: "#fff" }}>
       <p className="sl-label text-[10px] text-white/80">
         <span style={{ color: "var(--hot)" }}>●</span>{" "}
-        {broken ? "Your key stopped working" : "Free · bring your own key"}
+        {broken ? "Your key stopped working" : "Step 1 · connect your key"}
       </p>
       <h2 className="mt-1 text-2xl font-extrabold leading-tight">
         {broken ? (
@@ -174,7 +174,7 @@ export default function CollectorCard({ onChange }: { onChange?: () => void }) {
           </>
         ) : (
           <>
-            Track up to 30 accounts, <span className="sl-kw">free.</span>
+            Connect your key to start <span className="sl-kw">tracking.</span>
           </>
         )}
       </h2>
@@ -226,9 +226,10 @@ export default function CollectorCard({ onChange }: { onChange?: () => void }) {
 
       <p className="mt-3 text-xs text-white/65">
         A free Apify account includes monthly usage credit (about $5 at the time
-        of writing), enough for roughly 30 accounts at a daily refresh. We use
-        the key only to collect public reel data for the accounts you track. It
-        is stored encrypted, never shown again, and you can disconnect any time.
+        of writing), which covers roughly 30 accounts at a daily refresh.
+        Collection runs on that credit, not ours. We use the key only to
+        collect public reel data for the accounts you track. It is stored
+        encrypted, never shown again, and you can disconnect any time.
       </p>
     </form>
   );

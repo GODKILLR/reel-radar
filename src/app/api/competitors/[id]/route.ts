@@ -9,7 +9,6 @@ type Ctx = { params: Promise<{ id: string }> };
 /**
  * Stop tracking an account. This only removes the user's own link: the posts
  * stay in the shared pool because other users may still track the account.
- * Points spent adding it are not refunded.
  */
 export async function DELETE(_req: NextRequest, ctx: Ctx) {
   const a = await authed();

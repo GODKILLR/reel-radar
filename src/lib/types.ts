@@ -67,9 +67,7 @@ export interface PlanLimits {
   maxAccounts: number;
   reelsPerAccount: number;
   refreshHours: number;
-  savedLimit: number;
   discoverLimit: number;
-  monthlyPoints: number;
 }
 
 export interface Me {
@@ -79,31 +77,20 @@ export interface Me {
     name: string | null;
     plan: string;
     planName: string;
-    /** Collecting on their own key (unlocks higher limits). */
-    ownKey: boolean;
-    points: number;
-    pointsResetAt: string;
     isAdmin: boolean;
+    /** Has a working collector key (or is an admin). Required to track accounts. */
+    canCollect: boolean;
+    hasKey: boolean;
+    collectorStatus: "ok" | "out_of_credit" | "invalid" | null;
     limits: PlanLimits;
   };
   usage: { accounts: number; saved: number };
-  ledger: {
-    delta: number;
-    balance_after: number;
-    reason: string;
-    created_at: string;
-  }[];
-  addAccountCost: number;
   plans: {
     id: string;
     name: string;
+    priceUsd: number;
     blurb: string;
     maxAccounts: number;
-    reelsPerAccount: number;
-    refreshHours: number;
-    savedLimit: number;
-    discoverLimit: number;
-    monthlyPoints: number;
   }[];
 }
 

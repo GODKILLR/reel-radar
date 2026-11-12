@@ -3,7 +3,7 @@ import { query, queryOne } from "./db";
 import { config } from "./config";
 import { startRun, CollectorHttpError, type Tier } from "./apify";
 import { getAdapter } from "./actors";
-import { CURATED_REFRESH_HOURS, planOf } from "./plans";
+import { CURATED_REFRESH_HOURS, REFRESH_HOURS } from "./plans";
 import {
   checkToken,
   getUserToken,
@@ -17,33 +17,24 @@ export interface Competitor {
   backfilled_at: string | null;
   last_scraped_at: string | null;
   is_curated: boolean;
-  /** Distinct plans of the users tracking this account. */
-  plans: string[];
-  /** Tracked by this many users who rely on OUR collection. */
+  /** Tracked by this many admins, whose collection we run ourselves. */
   platform_trackers: number;
   /** Tracking users who collect on their own key and whose key works. */
   key_owner_ids: string[];
 }
 
 /**
- * How often an account should be refreshed: as often as its best-paying
- * tracker's plan allows, so a free user's account is touched daily while a
- * Studio user's is every couple of hours. Featured accounts never go staler
- * than CURATED_REFRESH_HOURS. An account nobody tracks falls back to daily.
+ * How often an account should be refreshed: daily for everyone (it is the
+ * user's own credit being spent), and featured accounts never go staler than
+ * CURATED_REFRESH_HOURS.
  */
-export function refreshHoursFor(
-  c: Pick<Competitor, "plans" | "is_curated">
-): number {
-  const hours = Math.min(
-    ...c.plans.map((p) => planOf(p).refreshHours),
-    c.is_curated ? CURATED_REFRESH_HOURS : Infinity
-  );
-  return Number.isFinite(hours) ? hours : planOf("free").refreshHours;
+export function refreshHoursFor(c: Pick<Competitor, "is_curated">): number {
+  return c.is_curated ? CURATED_REFRESH_HOURS : REFRESH_HOURS;
 }
 
 /** Whether an account is due a refresh at time `now` (ms). */
 export function isDue(
-  c: Pick<Competitor, "plans" | "is_curated" | "last_scraped_at">,
+  c: Pick<Competitor, "is_curated" | "last_scraped_at">,
   now: number
 ): boolean {
   if (!c.last_scraped_at) return true;
@@ -62,17 +53,8 @@ export async function loadCandidates(): Promise<Competitor[]> {
   return query<Competitor>(
     `
     SELECT c.id, c.username, c.backfilled_at, c.last_scraped_at, c.is_curated,
-           COALESCE(
-             ARRAY_AGG(DISTINCT CASE
-                 WHEN u.is_admin THEN 'admin'
-                 WHEN u.collector_key_enc IS NOT NULL AND u.plan = 'free'
-                   THEN 'connect'
-                 ELSE u.plan END)
-               FILTER (WHERE u.id IS NOT NULL),
-             '{}'
-           ) AS plans,
            (COUNT(DISTINCT u.id)
-              FILTER (WHERE u.collector_key_enc IS NULL))::int
+              FILTER (WHERE u.is_admin AND u.collector_key_enc IS NULL))::int
              AS platform_trackers,
            COALESCE(
              ARRAY_AGG(DISTINCT u.id::text)
@@ -92,8 +74,8 @@ export async function loadCandidates(): Promise<Competitor[]> {
 
 /**
  * Splits accounts by who pays for collecting them:
- *  - platform: featured accounts, and any account tracked by at least one user
- *    who relies on our collection (shared, so it is scraped once);
+ *  - platform: featured accounts, and any account an admin tracks (we run
+ *    those ourselves, shared so each is scraped once);
  *  - one pool per user with their own working key, for accounts ONLY they (and
  *    other self-funded users) track.
  * Accounts tracked only by users whose own key is broken or out of credit land

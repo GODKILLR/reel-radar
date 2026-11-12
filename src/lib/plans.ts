@@ -1,114 +1,71 @@
 /**
- * Plans and points. Everything a user can be told about limits lives here, so
- * the UI, the API and the poller all read the same numbers.
- *
- * Users only ever see "points" and plan limits - never what a scrape costs or
- * which vendor does it. Points are what adding an account spends, because that
- * is the one action that triggers a real (paid) history fetch.
+ * Plans. Everyone collects on their OWN collector key, so what a plan changes is
+ * the one thing that is ours to sell: how many accounts the tool will track for
+ * you. There are no points and no usage meters - just that number.
  */
 
-/**
- * "connect" is not a plan anyone is *on*: it is the set of limits a Free user
- * gets while they have their own collector key connected (see limitsFor in
- * session.ts). It is never stored in users.plan.
- */
-export type PlanId = "free" | "pro" | "studio" | "admin" | "connect";
+export type PlanId = "free" | "pro" | "ultra" | "admin";
 
 export interface Plan {
   id: PlanId;
   name: string;
+  /** Monthly price in USD (display only until payments are connected). */
+  priceUsd: number;
   /** Accounts a user can track at the same time. */
   maxAccounts: number;
-  /** Most recent reels (and, separately, other posts) shown per account. */
-  reelsPerAccount: number;
-  /** How often each tracked account is refreshed, in hours. */
-  refreshHours: number;
-  /** Reels that can sit on the saved-ideas board. */
-  savedLimit: number;
-  /** Outliers shown in the Discover tab. */
-  discoverLimit: number;
-  /** Points the balance resets to each month. */
-  monthlyPoints: number;
   blurb: string;
 }
 
-const UNLIMITED = 1_000_000;
+/** Same for every plan: how much history we show per account. */
+export const REELS_PER_ACCOUNT = 200;
+/** Same for every plan: how often each account is refreshed. */
+export const REFRESH_HOURS = 24;
+/** How many outliers the Discover tab shows. */
+export const DISCOVER_LIMIT = 30;
 
 export const PLANS: Record<PlanId, Plan> = {
   free: {
     id: "free",
     name: "Free",
-    maxAccounts: 3,
-    reelsPerAccount: 200,
-    refreshHours: 24,
-    savedLimit: 10,
-    discoverLimit: 10,
-    monthlyPoints: 50,
-    blurb: "A taste of the tool. Track three accounts and see what's working.",
+    priceUsd: 0,
+    maxAccounts: 10,
+    blurb: "Connect your key and track up to 10 accounts.",
   },
   pro: {
     id: "pro",
     name: "Pro",
-    maxAccounts: 15,
-    reelsPerAccount: 500,
-    refreshHours: 6,
-    savedLimit: UNLIMITED,
-    discoverLimit: 50,
-    monthlyPoints: 300,
-    blurb: "For creators and teams who research every week.",
+    priceUsd: 1,
+    maxAccounts: 20,
+    blurb: "Twice the accounts, for $1 a month.",
   },
-  studio: {
-    id: "studio",
-    name: "Studio",
-    maxAccounts: 50,
-    reelsPerAccount: 1000,
-    refreshHours: 2,
-    savedLimit: UNLIMITED,
-    discoverLimit: 100,
-    monthlyPoints: 1500,
-    blurb: "Agencies and heavy research. Fastest refresh, deepest history.",
-  },
-  // Free user + their own collector key. They fund their own collection, so
-  // the caps are about what one monthly free credit can sustain at a daily
-  // refresh (roughly 30 accounts), not about our cost.
-  connect: {
-    id: "connect",
-    name: "Free + own key",
-    maxAccounts: 30,
-    reelsPerAccount: 200,
-    refreshHours: 24,
-    savedLimit: UNLIMITED,
-    discoverLimit: 25,
-    monthlyPoints: 0,
-    blurb: "Connect your own collector key for up to 30 accounts.",
+  ultra: {
+    id: "ultra",
+    name: "Ultra",
+    priceUsd: 2,
+    maxAccounts: 100,
+    blurb: "For heavy research: track up to 100 accounts.",
   },
   // Internal: not listed anywhere, not sellable.
   admin: {
     id: "admin",
     name: "Admin",
+    priceUsd: 0,
     maxAccounts: 500,
-    reelsPerAccount: 1000,
-    refreshHours: 2,
-    savedLimit: UNLIMITED,
-    discoverLimit: 100,
-    monthlyPoints: 0,
     blurb: "",
   },
 };
 
 /** Plans a user can see and (eventually) buy. */
-export const PUBLIC_PLANS: Plan[] = [PLANS.free, PLANS.pro, PLANS.studio];
-
-/** Points spent when a user adds an account to track. */
-export const ADD_ACCOUNT_COST = 10;
+export const PUBLIC_PLANS: Plan[] = [PLANS.free, PLANS.pro, PLANS.ultra];
 
 /** Featured (Discover) accounts are refreshed at least this often. */
 export const CURATED_REFRESH_HOURS = 6;
 
+/**
+ * Looks a plan up by id. Unknown ids fall back to Free, and the old "studio"
+ * name maps to Ultra so any existing row keeps working.
+ */
 export function planOf(id: string | null | undefined): Plan {
+  if (id === "studio") return PLANS.ultra;
   return PLANS[(id as PlanId) in PLANS ? (id as PlanId) : "free"];
-}
-
-export function isUnlimited(n: number): boolean {
-  return n >= UNLIMITED;
 }

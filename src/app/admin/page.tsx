@@ -10,7 +10,6 @@ interface Overview {
     email: string;
     name: string | null;
     plan: string;
-    points: number;
     is_admin: boolean;
     created_at: string;
     last_login_at: string | null;
@@ -180,10 +179,8 @@ export default function AdminPage() {
             <tr className="sl-label bg-[var(--ink)] text-left text-[10px] text-white">
               <th className="px-4 py-3">Email</th>
               <th className="px-4 py-3">Plan</th>
-              <th className="px-4 py-3 text-right">Points</th>
               <th className="px-4 py-3 text-right">Accounts</th>
               <th className="px-4 py-3 text-right">Joined</th>
-              <th className="px-4 py-3 text-right">Grant points</th>
             </tr>
           </thead>
           <tbody>
@@ -219,31 +216,14 @@ export default function AdminPage() {
                     }
                     className="sl-input py-1 text-xs"
                   >
-                    <option value="free">Free</option>
-                    <option value="pro">Pro</option>
-                    <option value="studio">Studio</option>
+                    <option value="free">Free · 10</option>
+                    <option value="pro">Pro · 20</option>
+                    <option value="ultra">Ultra · 100</option>
                   </select>
                 </td>
-                <td className="nums px-4 py-2.5 text-right">{u.points}</td>
                 <td className="nums px-4 py-2.5 text-right">{u.accounts}</td>
                 <td className="px-4 py-2.5 text-right text-[var(--muted)]">
                   {relativeTime(u.created_at)}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <div className="flex justify-end gap-1.5">
-                    {[50, 100].map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        className="sl-btn sl-btn-sm"
-                        onClick={() =>
-                          patch(`/api/admin/users/${u.id}`, { pointsDelta: n })
-                        }
-                      >
-                        +{n}
-                      </button>
-                    ))}
-                  </div>
                 </td>
               </tr>
             ))}

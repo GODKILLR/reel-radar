@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { queryOne, query } from "@/lib/db";
+import { query } from "@/lib/db";
 import { authed } from "@/lib/session";
 import {
   checkToken,
@@ -8,7 +8,6 @@ import {
   getCollectorInfo,
   looksLikeToken,
 } from "@/lib/collector";
-import { PLANS } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
 
@@ -33,15 +32,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { error: "Connecting your own key isn't available right now." },
       { status: 503 }
-    );
-  }
-
-  // Managed plans already include collection; letting them also bring a key
-  // would only muddy who pays for what.
-  if (!user.isAdmin && user.plan !== "free") {
-    return NextResponse.json(
-      { error: "Your plan already includes collection - no key needed." },
-      { status: 409 }
     );
   }
 
@@ -114,33 +104,13 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * Disconnect. Refused while the user tracks more accounts than the Free plan
- * allows: otherwise connect -> add 30 accounts -> disconnect would hand all 30
- * to our own collection bill.
+ * Disconnect. Their tracked accounts simply stop being collected - there is no
+ * fallback onto our own collection, so there is nothing to abuse here.
  */
 export async function DELETE() {
   const a = await authed();
   if ("res" in a) return a.res;
   const { user } = a;
-
-  if (!user.isAdmin) {
-    const row = await queryOne<{ n: string }>(
-      `SELECT COUNT(*)::text AS n FROM user_competitors WHERE user_id = $1`,
-      [user.id]
-    );
-    const tracked = Number(row?.n ?? 0);
-    const freeMax = PLANS.free.maxAccounts;
-    if (tracked > freeMax) {
-      const over = tracked - freeMax;
-      return NextResponse.json(
-        {
-          error: `Stop tracking ${over} account${over === 1 ? "" : "s"} first: the Free plan without your own key tracks up to ${freeMax}.`,
-          code: "over_free_limit",
-        },
-        { status: 409 }
-      );
-    }
-  }
 
   await query(
     `

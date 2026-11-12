@@ -2,8 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { query, transaction } from "@/lib/db";
 import { config } from "@/lib/config";
 import { parseUsername } from "@/lib/username";
-import { authed, limitsFor, usesOwnCollector } from "@/lib/session";
-import { ADD_ACCOUNT_COST, isUnlimited } from "@/lib/plans";
+import { authed, canCollect, limitsFor } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -45,15 +44,28 @@ class PlanError extends Error {
 }
 
 /**
- * Track a new account. Everything that must hold together happens in one
- * transaction with the user's row locked: the plan limit, the points balance,
- * the link and the ledger entry. Two rapid clicks therefore cannot overspend.
+ * Track a new account. Collection runs on the user's OWN key, so they need one
+ * connected first. The plan limit is checked in a transaction with the user's
+ * row locked, so two rapid clicks cannot slip past it.
  */
 export async function POST(req: NextRequest) {
   const a = await authed();
   if ("res" in a) return a.res;
   const { user } = a;
   const limits = limitsFor(user);
+
+  if (!canCollect(user)) {
+    return NextResponse.json(
+      {
+        error:
+          user.hasOwnKey
+            ? "Your Apify key stopped working. Reconnect it to keep tracking accounts."
+            : "Connect your Apify key first. It takes about a minute, and it's what collects the reels for you.",
+        code: "needs_key",
+      },
+      { status: 403 }
+    );
+  }
 
   let payload: { username?: string };
   try {
@@ -72,8 +84,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await transaction(async (tx) => {
-      const [locked] = await tx.query<{ points: number }>(
-        `SELECT points FROM users WHERE id = $1 FOR UPDATE`,
+      const [locked] = await tx.query(
+        `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`,
         [user.id]
       );
       if (!locked) throw new PlanError("Please sign in.", 401, "auth");
@@ -87,18 +99,6 @@ export async function POST(req: NextRequest) {
           `Your ${limits.name} plan tracks up to ${limits.maxAccounts} accounts. Remove one to add another${user.isAdmin ? "." : ", or upgrade for more."}`,
           403,
           "account_limit"
-        );
-      }
-
-      // Admins and users collecting on their own key are not charged points:
-      // points exist to cover OUR collection cost.
-      const cost =
-        user.isAdmin || usesOwnCollector(user) ? 0 : ADD_ACCOUNT_COST;
-      if (locked.points < cost) {
-        throw new PlanError(
-          `You need ${cost} points to add an account and have ${locked.points}. Points refill on your next monthly reset.`,
-          402,
-          "no_points"
         );
       }
 
@@ -124,35 +124,13 @@ export async function POST(req: NextRequest) {
       if (linked.length === 0) {
         throw new PlanError(`You're already tracking @${username}.`, 409, "dup");
       }
-
-      let balance = locked.points;
-      if (cost > 0) {
-        balance = locked.points - cost;
-        await tx.query(`UPDATE users SET points = $2 WHERE id = $1`, [
-          user.id,
-          balance,
-        ]);
-        await tx.query(
-          `
-          INSERT INTO points_ledger (user_id, delta, balance_after, reason)
-          VALUES ($1, $2, $3, $4)
-          `,
-          [user.id, -cost, balance, `Added @${username}`]
-        );
-      }
-
-      return { id: comp.id, balance, cost };
+      return { id: comp.id };
     });
 
     // backfilled_at stays null until the first collection, so the next poll
     // cycle picks a brand-new account up for its one-time history fetch.
     return NextResponse.json(
-      {
-        competitor: { id: result.id, username },
-        pointsSpent: result.cost,
-        points: result.balance,
-        unlimited: isUnlimited(limits.maxAccounts),
-      },
+      { competitor: { id: result.id, username } },
       { status: 201 }
     );
   } catch (err) {

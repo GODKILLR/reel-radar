@@ -63,7 +63,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
         </h1>
         <p className="mb-5 mt-3 text-sm text-[var(--muted)]">
           {isSignup
-            ? "Create a free account. Track 3 accounts, see their top reels, and start with 50 points."
+            ? "Create a free account, connect your own Apify key, and track up to 10 Instagram accounts."
             : "Log in to your outlier feed."}
         </p>
 

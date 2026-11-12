@@ -9,16 +9,10 @@ import { useWatch } from "@/lib/useWatch";
 
 interface DiscoverData {
   posts: Post[];
-  total: number;
-  shown: number;
-  locked: number;
 }
 
 export default function DiscoverPage() {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [meta, setMeta] = useState<{ total: number; locked: number } | null>(
-    null
-  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -27,7 +21,6 @@ export default function DiscoverPage() {
       try {
         const data = await api<DiscoverData>("/api/discover");
         setPosts(data.posts);
-        setMeta({ total: data.total, locked: data.locked });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not load Discover.");
       } finally {
@@ -49,8 +42,8 @@ export default function DiscoverPage() {
         </h1>
         <p className="mt-3 max-w-xl text-base text-[var(--muted)]">
           Hand-picked accounts, ranked by how far each reel beat its own
-          account&apos;s average. No setup, no points - just ideas that are
-          working right now.
+          account&apos;s average. Ideas that are working right now, and the
+          fastest way to see what the tool finds for you.
         </p>
       </section>
 
@@ -70,8 +63,8 @@ export default function DiscoverPage() {
             Fresh picks are <span className="sl-kw">on the way.</span>
           </p>
           <p className="mx-auto mt-2 max-w-md text-sm text-[var(--muted)]">
-            Nothing is featured yet. In the meantime, track your own accounts
-            and the outliers will show up in your feed.
+            Nothing is featured yet. In the meantime, connect your key, track
+            your own accounts, and the outliers will show up in your feed.
           </p>
           <Link href="/competitors" className="sl-btn sl-btn-primary mt-5">
             Track an account →
@@ -89,23 +82,22 @@ export default function DiscoverPage() {
         </div>
       )}
 
-      {meta && meta.locked > 0 && (
+      {!loading && posts.length > 0 && (
         <div
           className="sl-card sl-halftone mt-8 flex flex-wrap items-center justify-between gap-4 p-6"
           style={{ background: "var(--dark)", color: "#fff" }}
         >
           <div>
             <p className="text-2xl font-extrabold leading-tight">
-              <span className="nums">{meta.locked}</span> more outliers are{" "}
-              <span className="sl-kw">waiting.</span>
+              Want this for <span className="sl-kw">your</span> niche?
             </p>
             <p className="mt-1 text-sm text-white/75">
-              Your plan shows the top {posts.length}. Higher plans open the
-              rest of Discover, track more accounts and refresh faster.
+              Connect your own key and track the accounts you care about. The
+              tool flags their outliers for you.
             </p>
           </div>
-          <Link href="/account" className="sl-btn">
-            See plans →
+          <Link href="/competitors" className="sl-btn">
+            Start tracking →
           </Link>
         </div>
       )}

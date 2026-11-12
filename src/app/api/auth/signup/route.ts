@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { queryOne, transaction } from "@/lib/db";
+import { queryOne } from "@/lib/db";
 import {
   SESSION_COOKIE,
   SESSION_MAX_AGE,
@@ -10,7 +10,6 @@ import {
   normalizeEmail,
   passwordProblem,
 } from "@/lib/password";
-import { PLANS } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
 
@@ -60,30 +59,18 @@ export async function POST(req: NextRequest) {
 
   const passwordHash = await hashPassword(payload.password as string);
   const admin = isAdminEmail(email);
-  const startingPoints = admin ? 0 : PLANS.free.monthlyPoints;
 
   let userId: number;
   try {
-    userId = await transaction(async (tx) => {
-      const [row] = await tx.query<{ id: string }>(
-        `
-        INSERT INTO users (email, password_hash, name, plan, points, is_admin)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id
-        `,
-        [email, passwordHash, name, admin ? "studio" : "free", startingPoints, admin]
-      );
-      if (startingPoints > 0) {
-        await tx.query(
-          `
-          INSERT INTO points_ledger (user_id, delta, balance_after, reason)
-          VALUES ($1, $2, $2, 'Welcome points')
-          `,
-          [row.id, startingPoints]
-        );
-      }
-      return Number(row.id);
-    });
+    const row = await queryOne<{ id: string }>(
+      `
+      INSERT INTO users (email, password_hash, name, plan, is_admin)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id
+      `,
+      [email, passwordHash, name, admin ? "ultra" : "free", admin]
+    );
+    userId = Number(row!.id);
   } catch (err) {
     // Two sign-ups racing on the same email: the unique index decides.
     if ((err as { code?: string }).code === "23505") {

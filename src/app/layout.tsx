@@ -66,11 +66,11 @@ export default async function RootLayout({
                 <div className="ml-auto flex items-center gap-3">
                   <Link
                     href="/account"
-                    className="sl-tag nums"
+                    className="sl-tag"
                     style={{ background: "var(--warm)" }}
-                    title={`${user.points} points · ${user.isAdmin ? "Admin" : user.planInfo.name} plan`}
+                    title={`${user.isAdmin ? "Admin" : user.planInfo.name} plan`}
                   >
-                    ◆ {user.isAdmin ? "∞" : user.points} pts
+                    {user.isAdmin ? "Admin" : user.planInfo.name}
                   </Link>
                   <SignOut />
                 </div>

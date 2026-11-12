@@ -10,7 +10,7 @@ export default function Nav({ isAdmin }: { isAdmin: boolean }) {
     { href: "/discover", label: "Discover" },
     { href: "/", label: "My feed" },
     { href: "/competitors", label: "Accounts" },
-    { href: "/account", label: "Plan & points" },
+    { href: "/account", label: "Plan" },
     ...(isAdmin ? [{ href: "/admin", label: "Admin" }] : []),
   ];
 

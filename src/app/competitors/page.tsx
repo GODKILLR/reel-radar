@@ -38,16 +38,11 @@ export default function AccountsPage() {
     setBusy(true);
     setMessage(null);
     try {
-      const res = await postJson<{ pointsSpent: number }>("/api/competitors", {
-        username: input,
-      });
+      await postJson("/api/competitors", { username: input });
       setInput("");
       setMessage({
         kind: "ok",
-        text:
-          res.pointsSpent > 0
-            ? `Added. ${res.pointsSpent} points spent. Their reels will appear shortly.`
-            : "Added. Their reels will appear shortly.",
+        text: "Added. Their reels appear after the next collection (usually within a few hours).",
       });
       await refresh();
     } catch (err) {
@@ -55,8 +50,7 @@ export default function AccountsPage() {
       setMessage({
         kind: "err",
         text: err instanceof Error ? err.message : "Something went wrong.",
-        upgrade:
-          apiErr?.code === "account_limit" || apiErr?.code === "no_points",
+        upgrade: apiErr?.code === "account_limit",
       });
     } finally {
       setBusy(false);
@@ -65,7 +59,7 @@ export default function AccountsPage() {
 
   async function remove(c: Competitor) {
     const ok = window.confirm(
-      `Stop tracking @${c.username}? Points spent adding it are not refunded, and adding it again costs points again. Reels you saved stay on your board.`
+      `Stop tracking @${c.username}? Reels you saved stay on your board.`
     );
     if (!ok) return;
     try {
@@ -81,6 +75,8 @@ export default function AccountsPage() {
 
   const limits = me?.user.limits;
   const atLimit = !!limits && competitors.length >= limits.maxAccounts;
+  // Collection runs on the user's own key, so tracking needs one connected.
+  const needsKey = !!me && !me.user.canCollect;
 
   return (
     <>
@@ -96,30 +92,15 @@ export default function AccountsPage() {
         up to their latest {limits?.reelsPerAccount ?? 200} reels.
       </p>
 
-      {me && (me.user.plan === "free" || me.user.isAdmin) && (
-        <CollectorCard onChange={refresh} />
-      )}
+      {me && !me.user.isAdmin && <CollectorCard onChange={refresh} />}
 
       {me && limits && (
         <div className="mb-4 flex flex-wrap gap-4">
           <Meter
-            label="Accounts"
+            label={`${me.user.planName} plan`}
             value={competitors.length}
             max={limits.maxAccounts}
           />
-          <div className="sl-card px-4 py-3">
-            <div className="nums text-2xl font-extrabold leading-none">
-              {me.user.isAdmin ? "∞" : me.user.points}
-              <span className="ml-1 text-sm font-bold text-[var(--muted)]">
-                pts
-              </span>
-            </div>
-            <div className="sl-label mt-1.5 text-[10px] text-[var(--muted)]">
-              {me.user.isAdmin || me.user.ownKey
-                ? "Adding accounts is free"
-                : `Adding an account costs ${me.addAccountCost} pts`}
-            </div>
-          </div>
         </div>
       )}
 
@@ -132,17 +113,22 @@ export default function AccountsPage() {
           onChange={(e) => setInput(e.target.value)}
           placeholder="handle, @handle, or instagram.com/handle"
           aria-label="Instagram handle to track"
-          disabled={atLimit}
+          disabled={atLimit || needsKey}
           className="sl-input min-w-[260px] flex-1"
         />
         <button
           type="submit"
-          disabled={busy || !input.trim() || atLimit}
+          disabled={busy || !input.trim() || atLimit || needsKey}
           className="sl-btn sl-btn-primary"
         >
           {busy ? "Adding…" : "Track account"}
         </button>
-        {atLimit && (
+        {needsKey && (
+          <p className="w-full text-sm font-semibold text-[var(--muted)]">
+            Connect your key above to start tracking accounts.
+          </p>
+        )}
+        {!needsKey && atLimit && (
           <p className="w-full text-sm font-semibold text-[var(--muted)]">
             You&apos;re at your plan&apos;s limit. Remove an account to add
             another, or{" "}
@@ -315,7 +301,7 @@ function Meter({
         />
       </div>
       <div className="sl-label mt-1.5 text-[10px] text-[var(--muted)]">
-        {label} tracked
+        accounts tracked · {label}
       </div>
     </div>
   );

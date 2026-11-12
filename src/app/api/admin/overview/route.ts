@@ -16,7 +16,7 @@ export async function GET() {
 
   const users = await query(
     `
-    SELECT u.id, u.email, u.name, u.plan, u.points, u.is_admin, u.created_at,
+    SELECT u.id, u.email, u.name, u.plan, u.is_admin, u.created_at,
            u.last_login_at, u.collector_status,
            (u.collector_key_enc IS NOT NULL) AS has_key,
            (SELECT COUNT(*) FROM user_competitors uc WHERE uc.user_id = u.id)

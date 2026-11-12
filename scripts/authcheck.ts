@@ -33,10 +33,10 @@ import {
   type Competitor,
 } from "../src/lib/poller";
 import {
-  ADD_ACCOUNT_COST,
   PLANS,
   PUBLIC_PLANS,
-  isUnlimited,
+  REELS_PER_ACCOUNT,
+  REFRESH_HOURS,
   planOf,
 } from "../src/lib/plans";
 
@@ -161,24 +161,19 @@ async function main() {
   check("email with spaces rejected", normalizeEmail("a b@c.com"), null);
   check("non-string email rejected", normalizeEmail(123), null);
 
-  // ---- plans: what the product promises ----
-  check("free: 3 accounts", PLANS.free.maxAccounts, 3);
-  check("free: latest 200 reels", PLANS.free.reelsPerAccount, 200);
-  check("free: daily refresh", PLANS.free.refreshHours, 24);
-  check("free: starts with 50 points", PLANS.free.monthlyPoints, 50);
-  check("add-account cost is positive", ADD_ACCOUNT_COST > 0, true);
-  check(
-    "free points afford more than the account cap (room to swap)",
-    PLANS.free.monthlyPoints >= PLANS.free.maxAccounts * ADD_ACCOUNT_COST,
-    true
-  );
+  // ---- plans: what the product promises (accounts are the ONLY difference) ----
+  check("free: 10 accounts, $0", [PLANS.free.maxAccounts, PLANS.free.priceUsd], [10, 0]);
+  check("pro: 20 accounts, $1", [PLANS.pro.maxAccounts, PLANS.pro.priceUsd], [20, 1]);
+  check("ultra: 100 accounts, $2", [PLANS.ultra.maxAccounts, PLANS.ultra.priceUsd], [100, 2]);
+  check("every plan shows the latest 200 reels", REELS_PER_ACCOUNT, 200);
+  check("every plan refreshes daily", REFRESH_HOURS, 24);
+  check("plans only differ by account count (no points fields)", Object.keys(PLANS.free).sort().join(","), "blurb,id,maxAccounts,name,priceUsd");
   check("unknown plan falls back to free", planOf("platinum").id, "free");
   check("null plan falls back to free", planOf(null).id, "free");
+  check("old 'studio' rows map to ultra", planOf("studio").id, "ultra");
   check("admin plan is never public", PUBLIC_PLANS.some((p) => p.id === "admin"), false);
-  check("paid plans strictly beat free on accounts", PLANS.pro.maxAccounts > PLANS.free.maxAccounts && PLANS.studio.maxAccounts > PLANS.pro.maxAccounts, true);
-  check("paid plans refresh faster", PLANS.pro.refreshHours < PLANS.free.refreshHours && PLANS.studio.refreshHours < PLANS.pro.refreshHours, true);
-  check("unlimited detection", isUnlimited(PLANS.pro.savedLimit), true);
-  check("free saved is limited", isUnlimited(PLANS.free.savedLimit), false);
+  check("public plans are free < pro < ultra", PUBLIC_PLANS.map((p) => p.maxAccounts).join("<"), "10<20<100");
+  check("paid plans cost more than free", PLANS.pro.priceUsd > PLANS.free.priceUsd && PLANS.ultra.priceUsd > PLANS.pro.priceUsd, true);
 
   // ---- collector keys: encryption at rest ----
   process.env.KEY_ENCRYPTION_SECRET = "k".repeat(40);
@@ -226,32 +221,41 @@ async function main() {
     backfilled_at: null,
     last_scraped_at: null,
     is_curated: false,
-    plans: [],
     platform_trackers: 0,
     key_owner_ids: [],
     ...over,
   });
   const pools = splitPools([
     mk({ id: 1, username: "featured", is_curated: true }),
-    mk({ id: 2, username: "shared", platform_trackers: 2, key_owner_ids: ["9"] }),
+    mk({ id: 2, username: "adminacct", platform_trackers: 1 }),
     mk({ id: 3, username: "mine", key_owner_ids: ["9"] }),
     mk({ id: 4, username: "twokeys", key_owner_ids: ["12", "9"] }),
-    mk({ id: 5, username: "paused" }), // only tracked by a user whose key is broken
+    mk({ id: 5, username: "paused" }), // only tracked by users with no working key
+    mk({ id: 6, username: "featured-and-keyed", is_curated: true, key_owner_ids: ["9"] }),
   ]);
   check("featured account is on the platform", pools.platform.some((c) => c.username === "featured"), true);
-  check("account with a platform-funded tracker stays on the platform (shared, scraped once)", pools.platform.some((c) => c.username === "shared"), true);
-  check("key-only account goes to that user's pool", pools.byUser.get("9")?.some((c) => c.username === "mine"), true);
+  check("an admin's account is collected by us", pools.platform.some((c) => c.username === "adminacct"), true);
+  check("featured account stays on the platform even if a keyed user tracks it (shared)", pools.platform.some((c) => c.username === "featured-and-keyed") && !pools.byUser.get("9")?.some((c) => c.username === "featured-and-keyed"), true);
+  check("a user's account goes to that user's own key", pools.byUser.get("9")?.some((c) => c.username === "mine"), true);
   check("two key owners: deterministic single owner (lowest id)", [pools.byUser.get("9")?.some((c) => c.username === "twokeys"), pools.byUser.has("12")], [true, false]);
-  check("account of a broken-key user is in NO pool (never silently becomes our cost)", [pools.platform.some((c) => c.username === "paused"), [...pools.byUser.values()].flat().some((c) => c.username === "paused")], [false, false]);
-  check("'connect' users refresh daily", refreshHoursFor({ plans: ["connect"], is_curated: false }), 24);
-  check("connect limits: 30 accounts, 200 reels", [PLANS.connect.maxAccounts, PLANS.connect.reelsPerAccount], [30, 200]);
-  check("connect plan is never public", PUBLIC_PLANS.some((p) => p.id === "connect"), false);
+  check("account with no working key is in NO pool (never silently becomes our cost)", [pools.platform.some((c) => c.username === "paused"), [...pools.byUser.values()].flat().some((c) => c.username === "paused")], [false, false]);
+  check("normal accounts refresh daily", refreshHoursFor({ is_curated: false }), 24);
+  check("featured accounts refresh every 6h", refreshHoursFor({ is_curated: true }), 6);
   check(
-    "30 accounts at a daily refresh fits one monthly free credit ($5)",
+    "even Ultra (100 accounts) at a daily refresh costs about $15/mo of the user's own credit (not ours)",
     (() => {
-      const perAcct = (730 / 24) * 8 * 0.0003 + (730 / 168) * 60 * 0.0003; // refresh + weekly sweep
+      const perAcct = (730 / 24) * 8 * 0.0003 + (730 / 168) * 60 * 0.0003;
       const runFees = (730 / 24) * 0.005 + (730 / 168) * 0.005;
-      return 30 * perAcct + runFees < 5;
+      return Math.round(100 * perAcct + runFees);
+    })(),
+    15
+  );
+  check(
+    "10 free accounts fit comfortably inside one free monthly credit ($5)",
+    (() => {
+      const perAcct = (730 / 24) * 8 * 0.0003 + (730 / 168) * 60 * 0.0003;
+      const runFees = (730 / 24) * 0.005 + (730 / 168) * 0.005;
+      return 10 * perAcct + runFees < 5;
     })(),
     true
   );
