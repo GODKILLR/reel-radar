@@ -1,4 +1,7 @@
-/** Star Labs mark: coral five-point star in a white circle, plus wordmark. */
+/** Star Labs logo (the official wordmark). Files live in public/brand/. */
+export const STAR_LABS_SITE = "https://starlabsstudio.com/";
+export const STAR_LABS_INSTAGRAM = "https://www.instagram.com/starlabs.ai/";
+
 function starPoints(cx: number, cy: number, outer: number, inner: number) {
   const pts: string[] = [];
   for (let i = 0; i < 10; i++) {
@@ -11,6 +14,7 @@ function starPoints(cx: number, cy: number, outer: number, inner: number) {
 
 const STAR = starPoints(20, 20.5, 11, 4.6);
 
+/** Small round star badge, kept for places that need a compact mark. */
 export function StarMark({ size = 36 }: { size?: number }) {
   return (
     <svg
@@ -33,15 +37,19 @@ export default function StarLogo({
   size?: number;
   onDark?: boolean;
 }) {
+  // The logo is ~1.73x wider than tall; `size` keeps its old meaning (roughly the
+  // height of the mark), so the image is a little taller than that.
+  const height = Math.round(size * 1.25);
+  const width = Math.round(height * 1.726);
   return (
-    <span className="inline-flex items-center gap-2">
-      <StarMark size={size} />
-      <span
-        className="text-[22px] font-extrabold leading-none tracking-tight"
-        style={{ color: onDark ? "#fff" : "var(--ink)" }}
-      >
-        Star <span style={{ color: "var(--accent)" }}>Labs</span>
-      </span>
-    </span>
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={onDark ? "/brand/logo-white.png" : "/brand/logo-dark.png"}
+      alt="Star Labs"
+      width={width}
+      height={height}
+      className="shrink-0"
+      style={{ height, width: "auto" }}
+    />
   );
 }

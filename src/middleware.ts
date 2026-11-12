@@ -20,6 +20,7 @@ const EXEMPT_PREFIXES = [
   "/login",
   "/signup",
   "/api/auth/",
+  "/brand/", // logo images shown on the login and signup pages
 ];
 
 export async function middleware(req: NextRequest) {

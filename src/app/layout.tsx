@@ -9,7 +9,7 @@ import "./globals.css";
 import SignOut from "@/components/SignOut";
 import { getUser } from "@/lib/session";
 import Nav from "@/components/Nav";
-import StarLogo from "@/components/StarLogo";
+import StarLogo, { STAR_LABS_INSTAGRAM, STAR_LABS_SITE } from "@/components/StarLogo";
 
 const display = Bricolage_Grotesque({
   subsets: ["latin"],
@@ -94,10 +94,32 @@ export default async function RootLayout({
 
         <footer className="border-t-[2.5px] bg-[var(--dark)] text-white">
           <div className="sl-halftone mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-6">
-            <StarLogo size={30} onDark />
-            <p className="sl-label text-white/80">
-              Build something people can&apos;t ignore.
-            </p>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <a href={STAR_LABS_SITE} target="_blank" rel="noopener noreferrer" aria-label="Star Labs website">
+                <StarLogo size={30} onDark />
+              </a>
+              <p className="sl-label text-white/80">
+                Build something people can&apos;t ignore.
+              </p>
+            </div>
+            <nav className="sl-label flex items-center gap-5 text-white" aria-label="Star Labs links">
+              <a
+                href={STAR_LABS_SITE}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-[var(--accent)] decoration-2 underline-offset-4 hover:text-[var(--accent)]"
+              >
+                starlabsstudio.com
+              </a>
+              <a
+                href={STAR_LABS_INSTAGRAM}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline decoration-[var(--accent)] decoration-2 underline-offset-4 hover:text-[var(--accent)]"
+              >
+                Instagram @starlabs.ai
+              </a>
+            </nav>
           </div>
         </footer>
       </body>
