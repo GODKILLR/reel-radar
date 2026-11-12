@@ -237,7 +237,69 @@ export default function AccountsPage() {
           Nothing tracked yet. Add a handle above.
         </div>
       ) : (
-        <div className="sl-card overflow-x-auto">
+        <>
+        {/* Phones: one card per account instead of a wide table. */}
+        <ul className="flex flex-col gap-3 md:hidden" aria-label="Tracked accounts">
+          {competitors.map((c) => (
+            <li key={c.id} className="sl-card p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <a
+                    href={`https://www.instagram.com/${c.username}/`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block truncate text-base font-bold underline-offset-2 hover:underline"
+                  >
+                    @{c.username}
+                  </a>
+                  {c.followers && (
+                    <div className="nums text-[11px] text-[var(--muted)]">
+                      {compactNumber(Number(c.followers))} followers
+                    </div>
+                  )}
+                </div>
+                {!c.last_scraped_at ? (
+                  <span className="sl-tag shrink-0" style={{ background: "var(--warm)" }}>
+                    collecting…
+                  </span>
+                ) : Number(c.outliers_last_30d) > 0 ? (
+                  <span
+                    className="sl-tag shrink-0"
+                    style={{ background: "var(--hot)", color: "#fff" }}
+                  >
+                    {c.outliers_last_30d} outlier{Number(c.outliers_last_30d) === 1 ? "" : "s"}
+                  </span>
+                ) : null}
+              </div>
+              <dl className="nums mt-3 grid grid-cols-3 divide-x-2 rounded-xl border-2 text-center">
+                <div className="px-1 py-1.5">
+                  <dd className="text-sm font-bold">{c.post_count}</dd>
+                  <dt className="sl-label text-[9px] text-[var(--muted)]">posts</dt>
+                </div>
+                <div className="px-1 py-1.5">
+                  <dd className="text-sm font-bold">{c.posts_last_7d}</dd>
+                  <dt className="sl-label text-[9px] text-[var(--muted)]">last 7d</dt>
+                </div>
+                <div className="px-1 py-1.5">
+                  <dd className="text-sm font-bold">
+                    {c.median_views ? compactNumber(Number(c.median_views)) : "—"}
+                  </dd>
+                  <dt className="sl-label text-[9px] text-[var(--muted)]">median</dt>
+                </div>
+              </dl>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <span className="sl-label text-[10px] text-[var(--muted)]">
+                  updated {relativeTime(c.last_scraped_at)}
+                </span>
+                <button type="button" onClick={() => remove(c)} className="sl-btn sl-btn-sm">
+                  Remove
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        <div className="sl-card hidden overflow-x-auto md:block">
           <table className="w-full text-sm">
             <thead>
               <tr className="sl-label bg-[var(--ink)] text-left text-[10px] text-white">
@@ -330,6 +392,7 @@ export default function AccountsPage() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       <p className="mt-4 text-xs text-[var(--muted)]">

@@ -52,10 +52,10 @@ export default async function RootLayout({
   return (
     <html lang="en" className={`${display.variable} ${serif.variable} ${mono.variable}`}>
       <body className="flex min-h-screen flex-col">
-        <header className="sticky top-0 z-30 border-b-[2.5px] bg-[var(--bg)]/95 backdrop-blur">
-          <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
-            <Link href="/" className="flex items-center gap-3" aria-label="Star Labs Reel Radar home">
-              <StarLogo />
+        <header className="z-30 border-b-[2.5px] sm:sticky sm:top-0 bg-[var(--bg)]/95 backdrop-blur">
+          <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5 sm:py-3">
+            <Link href="/" className="order-1 flex items-center gap-3" aria-label="Star Labs Reel Radar home">
+              <StarLogo size={28} />
               <span className="sl-label hidden rounded-full border-2 px-2.5 py-0.5 sm:inline-block">
                 <span style={{ color: "var(--hot)" }}>●</span> Reel Radar
               </span>
@@ -63,7 +63,7 @@ export default async function RootLayout({
             {user ? (
               <>
                 <Nav isAdmin={user.isAdmin} />
-                <div className="ml-auto flex items-center gap-3">
+                <div className="order-2 ml-auto flex items-center gap-3 sm:order-3">
                   <Link
                     href="/account"
                     className="sl-tag"

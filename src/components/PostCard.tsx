@@ -47,7 +47,7 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
 
   return (
     <article className="sl-card sl-card-hover group flex flex-col overflow-hidden">
-      <div className="relative aspect-[9/13] overflow-hidden border-b-[2.5px] bg-[var(--surface-2)]">
+      <div className="relative aspect-[4/5] overflow-hidden min-[480px]:aspect-[9/13] border-b-[2.5px] bg-[var(--surface-2)]">
         {post.thumbnail_url && !imgFailed ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
@@ -107,7 +107,7 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
             post.is_watchlisted ? "Remove from watchlist" : "Save to watchlist"
           }
           aria-pressed={post.is_watchlisted}
-          className="absolute bottom-2.5 right-2.5 flex h-9 w-9 items-center justify-center rounded-full border-[2.5px] bg-white text-lg leading-none opacity-0 shadow-[2px_2px_0_var(--ink)] transition focus:opacity-100 group-hover:opacity-100 aria-pressed:opacity-100"
+          className="absolute bottom-2.5 right-2.5 flex h-9 w-9 items-center justify-center rounded-full border-[2.5px] bg-white text-lg leading-none opacity-0 shadow-[2px_2px_0_var(--ink)] transition focus:opacity-100 group-hover:opacity-100 aria-pressed:opacity-100 [@media(hover:none)]:opacity-100"
           style={{ color: post.is_watchlisted ? "var(--accent)" : "var(--ink)" }}
         >
           {post.is_watchlisted ? "★" : "☆"}

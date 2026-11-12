@@ -15,7 +15,7 @@ export default function Nav({ isAdmin }: { isAdmin: boolean }) {
   ];
 
   return (
-    <nav className="flex flex-wrap items-center gap-2" aria-label="Main">
+    <nav className="order-3 flex basis-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 sm:order-2 sm:basis-auto sm:flex-wrap sm:overflow-visible sm:pb-0" aria-label="Main">
       {links.map((l) => {
         const active =
           l.href === "/" ? pathname === "/" : pathname.startsWith(l.href);
@@ -24,7 +24,7 @@ export default function Nav({ isAdmin }: { isAdmin: boolean }) {
             key={l.href}
             href={l.href}
             aria-current={active ? "page" : undefined}
-            className="sl-pill"
+            className="sl-pill shrink-0 whitespace-nowrap"
           >
             {l.label}
           </Link>
