@@ -19,7 +19,7 @@ const { Client } = require("pg");
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const E2E = fileURLToPath(new URL(".", import.meta.url));
 const DB_URL = "postgres://test:test@localhost:5433/rr_test";
-const SUITES = ["e2e-plans.mjs", "e2e-ondemand.mjs", "e2e-views.mjs"];
+const SUITES = ["e2e-plans.mjs", "e2e-ondemand.mjs", "e2e-views.mjs", "e2e-cleanup.mjs"];
 
 const ENV = {
   ...process.env,
@@ -39,7 +39,7 @@ const ENV = {
   WARM_LIMIT: "60",
   WARM_EVERY_HOURS: "168",
   BACKFILL_WINDOW_DAYS: "365",
-  BACKFILL_LIMIT: "200",
+  BACKFILL_LIMIT: "100",
   OUTLIER_THRESHOLD: "3",
   OUTLIER_MIN_AGE_HOURS: "24",
   OUTLIER_BASELINE_SIZE: "30",

@@ -56,14 +56,16 @@ export async function ingestPosts(
       productType: batch.map((p) => p.productType),
       isReel: batch.map((p) => p.isReel),
       url: batch.map((p) => p.url),
-      caption: batch.map((p) => p.caption),
+      // Only ever shown clamped to two lines; storing all of it is wasted space.
+      caption: batch.map((p) => (p.caption ? p.caption.slice(0, 300) : p.caption)),
       // UNNEST cannot carry a nested array, so tag and mention lists travel as
       // joined strings and are split back out in SQL. Neither can contain a
       // comma, so the round trip is lossless.
       hashtags: batch.map((p) => p.hashtags.join(",")),
       mentions: batch.map((p) => p.mentions.join(",")),
       thumbnailUrl: batch.map((p) => p.thumbnailUrl),
-      videoUrl: batch.map((p) => p.videoUrl),
+      // The raw video-file link is never used and expires in days: do not store it.
+      videoUrl: batch.map(() => null),
       durationSec: batch.map((p) => p.durationSec),
       postedAt: batch.map((p) => p.postedAt.toISOString()),
       views: batch.map((p) => p.views),
@@ -117,7 +119,6 @@ export async function ingestPosts(
         comments        = GREATEST(posts.comments, EXCLUDED.comments),
         caption         = COALESCE(EXCLUDED.caption, posts.caption),
         thumbnail_url   = COALESCE(EXCLUDED.thumbnail_url, posts.thumbnail_url),
-        video_url       = COALESCE(EXCLUDED.video_url, posts.video_url),
         hashtags        = EXCLUDED.hashtags,
         mentions        = EXCLUDED.mentions,
         is_paid_partnership = EXCLUDED.is_paid_partnership,
@@ -167,6 +168,23 @@ export async function ingestPosts(
         )
       `,
       [cols.shortcode, config.metrics.minGapMinutes]
+    );
+
+    // Keep only the newest few snapshots per post, so history cannot grow for
+    // ever. Velocity reads just the two most recent.
+    await query(
+      `
+      DELETE FROM post_metrics WHERE id IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (
+                   PARTITION BY shortcode ORDER BY captured_at DESC
+                 ) AS rn
+          FROM post_metrics
+          WHERE shortcode = ANY($1::text[])
+        ) t WHERE t.rn > $2
+      )
+      `,
+      [cols.shortcode, config.metrics.keepSnapshots]
     );
   }
 

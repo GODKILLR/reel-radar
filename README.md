@@ -227,7 +227,7 @@ user can track**, and lives in `src/lib/plans.ts`:
 | Price | $0 | $1 / month | $2 / month |
 | Accounts tracked | 10 | 20 | 100 |
 
-Every plan shows the latest 200 reels per account, refreshed daily, with
+Every plan shows the latest 100 reels per account, refreshed daily, with
 unlimited saved ideas. Prices are display-only until a payment provider is
 connected; paid plans are switched on by hand from `/admin` for now.
 

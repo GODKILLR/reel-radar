@@ -19,6 +19,7 @@ minutes.
 |---|---|
 | `e2e-plans.mjs` | Signup/login, plans (Free 10 / Pro 20 / Ultra 100), no points anywhere, key required to track, key connect/disconnect, credit and revoked-key handling, scheduler path, isolation between users, admin controls |
 | `e2e-ondemand.mjs` | Collection on request with the scheduler never called: instant collect after adding an account, no duplicate runs, cooldown, claim race between two users, out-of-credit/invalid/no-key outcomes, refused runs retried, featured accounts never on a user's key, admin "collect now" |
+| `e2e-cleanup.mjs` | Keeping the database small: 100-reel depth, snapshot cap, no stored video links, clean-up only deletes when the database is filling up, orphaned accounts and inactive users, saved ideas and featured accounts protected, last-seen, once-a-day guard |
 | `e2e-views.mjs` | Accounts whose reels return no views: detection, switch to the official collector, automatic re-collection on the same key, hidden likes stored as 0, per-collector run splitting, the idempotent schema self-heal, platform accounts |
 
 ## The fake collector (`fake-collector.mjs`)

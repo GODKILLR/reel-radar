@@ -3,9 +3,9 @@
  * Node runtime only (it queries Postgres).
  */
 import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { SESSION_COOKIE, readSession } from "./auth";
-import { queryOne } from "./db";
+import { query, queryOne } from "./db";
 import {
   DISCOVER_LIMIT,
   REELS_PER_ACCOUNT,
@@ -23,6 +23,7 @@ interface UserRow {
   is_admin: boolean;
   has_key: boolean;
   collector_status: string | null;
+  stale_seen: boolean;
 }
 
 export interface User {
@@ -38,7 +39,8 @@ export interface User {
 }
 
 const COLUMNS = `id, email, name, plan, is_admin,
-  (collector_key_enc IS NOT NULL) AS has_key, collector_status`;
+  (collector_key_enc IS NOT NULL) AS has_key, collector_status,
+  (last_seen_at < now() - interval '1 day') AS stale_seen`;
 
 function toUser(row: UserRow): User {
   const planInfo = planOf(row.plan);
@@ -63,6 +65,19 @@ export async function getUser(): Promise<User | null> {
     `SELECT ${COLUMNS} FROM users WHERE id = $1`,
     [uid]
   );
+  if (row?.stale_seen) {
+    // "Last seen" is touched at most once a day, so it costs one tiny write a
+    // day per user. It only decides when long-gone users' tracking is cleaned up.
+    const touch = () =>
+      query(`UPDATE users SET last_seen_at = now() WHERE id = $1`, [uid]).catch(
+        () => undefined
+      );
+    try {
+      after(touch);
+    } catch {
+      await touch();
+    }
+  }
   return row ? toUser(row) : null;
 }
 

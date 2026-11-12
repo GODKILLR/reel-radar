@@ -14,7 +14,7 @@ live state and what is left to do.
   page; collection runs on THEIR free monthly credit, not ours. No key = they can
   browse Discover and save ideas but cannot track accounts.
 - **Plans only set how many accounts a user can track:** Free 10 ($0), Pro 20
-  ($1/mo), Ultra 100 ($2/mo). Every plan: latest 200 reels per account, daily
+  ($1/mo), Ultra 100 ($2/mo). Every plan: latest 100 reels per account, daily
   refresh, unlimited saved ideas. Defined in `src/lib/plans.ts`.
 - **No points.** They were removed. `users.points` / `points_ledger` still exist in
   the schema but are unused; never show or charge points.
@@ -46,6 +46,19 @@ live state and what is left to do.
   run (`scrape_runs.hook_nonce`). Never put a global secret in that URL: for a
   user's run it is stored inside the USER's own Apify account.
 - Results are only accepted for the accounts that run was asked to collect.
+
+## Database size (Neon free = 1 GB)
+- Stored per reel: no video-file link (never used, expires), caption cut to 300
+  chars, only the newest `METRICS_KEEP` snapshots, no views/velocity indexes.
+  Per account we keep the newest 100 reels (+20 photos). Saved ideas are never trimmed.
+- `src/lib/cleanup.ts` runs about daily (from `/api/cron` and, after the response,
+  from `/api/collect`; a `maintenance` row guarantees once a day). Always: trim to
+  plan depth, prune snapshots, mark accounts nobody tracks. Only when the DB is
+  >= `CLEANUP_AT_PERCENT` full: delete accounts untracked for `ORPHAN_DAYS`
+  (never Discover accounts, never one with a saved reel) and drop the tracking of
+  users unseen for `INACTIVE_DAYS` (the user, email and saved ideas always stay).
+  Below the threshold it only reports. `/admin` shows size and the last run.
+- Users' `last_seen_at` is touched at most once a day (`getUser`).
 
 ## Security rules (non-negotiable)
 - User Apify tokens: AES-256-GCM, bound to the user id, key =

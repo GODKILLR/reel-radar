@@ -5,6 +5,25 @@ import { api } from "@/lib/client";
 import { relativeTime } from "@/lib/format";
 
 interface Overview {
+  storage: {
+    dbMb: number;
+    limitMb: number;
+    percentFull: number;
+    cleanupAtPercent: number;
+    orphanDays: number;
+    inactiveDays: number;
+    lastCleanupAt: string | null;
+    lastReport: {
+      deleting: boolean;
+      accountsDue: number;
+      accountsDeleted: number;
+      inactiveUsers: number;
+      trackingLinksRemoved: number;
+      postsTrimmed: number;
+      metricsPruned: number;
+      error?: string;
+    } | null;
+  };
   users: {
     id: string;
     email: string;
@@ -129,6 +148,54 @@ export default function AdminPage() {
           {error}
         </div>
       )}
+
+      <div className="sl-card mt-6 p-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <span className="sl-label text-[var(--muted)]">Database</span>
+          <span className="nums text-sm font-bold">
+            {data.storage.dbMb} MB of {data.storage.limitMb} MB ({data.storage.percentFull}%)
+          </span>
+        </div>
+        <div
+          className="mt-2 h-3 overflow-hidden rounded-full border-2"
+          role="progressbar"
+          aria-valuenow={Math.round(data.storage.percentFull)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-label="Database size"
+        >
+          <div
+            className="h-full"
+            style={{
+              width: `${Math.min(100, data.storage.percentFull)}%`,
+              background:
+                data.storage.percentFull >= data.storage.cleanupAtPercent
+                  ? "var(--hot)"
+                  : "var(--cool)",
+            }}
+          />
+        </div>
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          Clean-up runs about daily. Above {data.storage.cleanupAtPercent}% it deletes accounts
+          nobody has tracked for {data.storage.orphanDays} days and drops the tracking of users
+          unseen for {data.storage.inactiveDays} days (their email and saved ideas stay).
+          {data.storage.lastReport
+            ? ` Last run ${relativeTime(data.storage.lastCleanupAt)}: ${
+                data.storage.lastReport.error
+                  ? `failed (${data.storage.lastReport.error})`
+                  : `${data.storage.lastReport.deleting ? "deleted" : "would delete"} ${
+                      data.storage.lastReport.deleting
+                        ? data.storage.lastReport.accountsDeleted
+                        : data.storage.lastReport.accountsDue
+                    } account(s) and ${
+                      data.storage.lastReport.deleting
+                        ? data.storage.lastReport.trackingLinksRemoved
+                        : data.storage.lastReport.inactiveUsers
+                    } inactive user link set(s); trimmed ${data.storage.lastReport.postsTrimmed} old reels.`
+              }`
+            : " Has not run yet."}
+        </p>
+      </div>
 
       <div className="my-6 grid gap-4 sm:grid-cols-4">
         <Stat label="Users" value={String(data.users.length)} />

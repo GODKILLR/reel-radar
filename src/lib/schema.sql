@@ -53,9 +53,7 @@ CREATE TABLE IF NOT EXISTS posts (
 );
 
 CREATE INDEX IF NOT EXISTS posts_posted_at_idx      ON posts (posted_at DESC);
-CREATE INDEX IF NOT EXISTS posts_views_idx          ON posts (views DESC);
 CREATE INDEX IF NOT EXISTS posts_outlier_idx        ON posts (outlier_score DESC NULLS LAST);
-CREATE INDEX IF NOT EXISTS posts_velocity_idx       ON posts (views_per_hour DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS posts_competitor_idx     ON posts (competitor_id);
 CREATE INDEX IF NOT EXISTS posts_audio_idx           ON posts (audio_id)
   WHERE audio_id IS NOT NULL;
@@ -213,4 +211,35 @@ CREATE TABLE IF NOT EXISTS alerts (
   kind       TEXT NOT NULL,          -- outlier | new_post
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (shortcode, kind)
+);
+
+-- ---------------------------------------------------------------------------
+-- Keeping the database small (free-tier friendly). All idempotent.
+-- ---------------------------------------------------------------------------
+
+-- Two indexes nothing relies on: sorting happens inside one account's handful
+-- of reels, where a scan is instant, and each index cost ~0.1 KB per reel.
+DROP INDEX IF EXISTS posts_views_idx;
+DROP INDEX IF EXISTS posts_velocity_idx;
+
+-- The raw video-file link is never shown (users open the reel on Instagram via
+-- `url`) and Instagram expires it within days. Stop keeping it. The column stays
+-- so older code never breaks; a NULL costs nothing.
+UPDATE posts SET video_url = NULL WHERE video_url IS NOT NULL;
+
+-- Captions are only ever shown clamped to two lines.
+UPDATE posts SET caption = LEFT(caption, 300) WHERE LENGTH(caption) > 300;
+
+-- When a user last used the app (touched at most once a day). Drives clean-up of
+-- long-inactive users' tracking. Existing users start their clock at migration.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- First time clean-up noticed that nobody tracks this account (NULL = tracked).
+ALTER TABLE competitors ADD COLUMN IF NOT EXISTS orphaned_at TIMESTAMPTZ;
+
+-- One row per maintenance job, so a daily job runs once however often it is poked.
+CREATE TABLE IF NOT EXISTS maintenance (
+  job     TEXT PRIMARY KEY,
+  ran_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  report  JSONB
 );

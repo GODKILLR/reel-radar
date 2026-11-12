@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { config, assertConfigured } from "@/lib/config";
 import { runPollCycle } from "@/lib/poller";
 import type { Tier } from "@/lib/apify";
+import { runCleanup, runCleanupIfDue } from "@/lib/cleanup";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -25,6 +26,25 @@ async function handle(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  // Keeps the database small. Cheap, and runs about once a day however often
+  // this endpoint is called. `?cleanup=now` runs it immediately (and
+  // `&deleting=1|0` overrides the "is the database full enough" check - used by
+  // the tests; harmless otherwise because it is behind the cron secret).
+  let cleanup = null;
+  try {
+    if (url.searchParams.get("cleanup") === "now") {
+      const d = url.searchParams.get("deleting");
+      cleanup = await runCleanup(d === null ? {} : { forceDeleting: d === "1" });
+      if (url.searchParams.get("only") === "1") {
+        return NextResponse.json({ ok: true, cleanup });
+      }
+    } else {
+      cleanup = await runCleanupIfDue();
+    }
+  } catch (err) {
+    console.error("cleanup failed:", err instanceof Error ? err.message : err);
+  }
+
   try {
     assertConfigured();
     const force = url.searchParams.get("tier") as Tier | null;
@@ -34,6 +54,7 @@ async function handle(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      cleanup,
       launched: launched.map((l) => ({
         tier: l.tier,
         runId: l.runId,

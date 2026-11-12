@@ -5,7 +5,7 @@
  *   2. how deep into each account's history their plan reaches.
  *
  * Parameters: $1 = user id, $2 = reels-per-account limit.
- * Ranks reels and non-reels separately, so "latest 200 reels" really is 200
+ * Ranks reels and non-reels separately, so "latest 100 reels" really is 100
  * reels and a burst of photo posts cannot push reels out of the window.
  */
 export const VISIBLE_POSTS_CTE = `

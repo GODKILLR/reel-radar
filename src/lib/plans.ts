@@ -17,7 +17,7 @@ export interface Plan {
 }
 
 /** Same for every plan: how much history we show per account. */
-export const REELS_PER_ACCOUNT = 200;
+export const REELS_PER_ACCOUNT = 100;
 /** Same for every plan: how often each account is refreshed. */
 export const REFRESH_HOURS = 24;
 /** How many outliers the Discover tab shows. */

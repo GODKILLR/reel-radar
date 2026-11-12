@@ -34,7 +34,7 @@ Bricolage Grotesque + Instrument Serif italic keyword + JetBrains Mono labels.
   30 accounts roughly fits; 100 accounts (Ultra) is ~$15/month of the USER's own
   credit (they will pay Apify some themselves).
 - Accounts switched to the official collector cost ~9x per post (history fetch of
-  200 posts ~ $0.54). Only affected accounts pay it.
+  100 posts ~ $0.27). Only affected accounts pay it.
 - OUR costs: Vercel Pro (~$20/mo; Hobby is non-commercial), Neon (usage-based, a
   few $ to ~$20), domain, plus collection for FEATURED accounts only.
 - Payment fees on a $1 charge are a large share; check the provider before pricing.
@@ -49,7 +49,7 @@ Bricolage Grotesque + Instrument Serif italic keyword + JetBrains Mono labels.
   accounts collected in the single-user days).
 - Vercel env var NAMES present: DATABASE_URL, APIFY_TOKEN, CRON_SECRET,
   WEBHOOK_SECRET, KEY_ENCRYPTION_SECRET, APP_BASE_URL, APIFY_ACTOR, HOT_*, WARM_*,
-  BACKFILL_* (365 days / 200 posts), OUTLIER_*. `DASHBOARD_PASSWORD` is legacy and
+  BACKFILL_* (365 days; the limit is capped at 100 posts in code), OUTLIER_*. `DASHBOARD_PASSWORD` is legacy and
   unused. `ADMIN_EMAILS` is optional (auto-admin on signup).
 - `KEY_ENCRYPTION_SECRET` must be backed up by the owner; it was set by the owner
   (automation is not allowed to push secrets).

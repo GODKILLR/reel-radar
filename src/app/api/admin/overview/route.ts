@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { query, queryOne } from "@/lib/db";
 import { adminOnly } from "@/lib/session";
 import { getAdapter } from "@/lib/actors";
+import { storageStatus } from "@/lib/cleanup";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +64,10 @@ export async function GET() {
     `SELECT plan, COUNT(*)::text AS n FROM users GROUP BY plan`
   );
 
+  const storage = await storageStatus();
+
   return NextResponse.json({
+    storage,
     users,
     competitors,
     spend,

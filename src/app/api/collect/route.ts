@@ -1,6 +1,7 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { authed, canCollect } from "@/lib/session";
 import { runForUser, type CollectOutcome } from "@/lib/poller";
+import { runCleanupIfDue } from "@/lib/cleanup";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -28,6 +29,16 @@ export async function POST(req: NextRequest) {
   const a = await authed();
   if ("res" in a) return a.res;
   const { user } = a;
+
+  // The daily clean-up rides on normal traffic, after the response is sent, so
+  // it needs no scheduler of its own and never slows a user down.
+  after(async () => {
+    try {
+      await runCleanupIfDue();
+    } catch (err) {
+      console.error("cleanup failed:", err instanceof Error ? err.message : err);
+    }
+  });
 
   if (!canCollect(user)) {
     return NextResponse.json(

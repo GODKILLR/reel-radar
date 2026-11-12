@@ -3,6 +3,8 @@
  * trade Apify spend against freshness without touching code.
  */
 
+import { REELS_PER_ACCOUNT } from "./plans";
+
 function num(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -39,10 +41,11 @@ export const config = {
 
   /** One-time deep fetch when a competitor is first added. */
   backfill: {
-    // 200 matches the free plan's depth ("latest 200 reels per account"), so a
-    // new account always has enough history for every plan's first view.
+    // Matches every plan's depth ("latest 100 reels per account"). Never fetch
+    // more than we show: every extra reel is stored and paid for, and the
+    // database is small.
     windowDays: num("BACKFILL_WINDOW_DAYS", 365),
-    limitPerProfile: num("BACKFILL_LIMIT", 200),
+    limitPerProfile: Math.min(num("BACKFILL_LIMIT", REELS_PER_ACCOUNT), REELS_PER_ACCOUNT),
   },
 
   metrics: {
@@ -54,6 +57,25 @@ export const config = {
      * Polls are hours apart, so anything closer than this is a duplicate.
      */
     minGapMinutes: num("METRICS_MIN_GAP_MINUTES", 10),
+    /**
+     * Snapshots kept per post. Velocity only ever reads the newest two; the rest
+     * is headroom. Older ones are deleted as new ones arrive.
+     */
+    keepSnapshots: Math.max(3, num("METRICS_KEEP", 6)),
+  },
+
+  /** Keeping the database inside a small (free) plan. See src/lib/cleanup.ts. */
+  storage: {
+    /** Size of the database plan, in MB (Neon free = 1 GB). */
+    limitMb: num("DB_LIMIT_MB", 1024),
+    /** Deleting whole accounts / users' tracking only starts above this fill. */
+    cleanupAtPercent: num("CLEANUP_AT_PERCENT", 70),
+    /** An account nobody tracks is deleted after this many days. */
+    orphanDays: num("ORPHAN_DAYS", 30),
+    /** A user unseen for this many days has their tracking links removed. */
+    inactiveDays: num("INACTIVE_DAYS", 90),
+    /** Photos/carousels kept per account (reels are kept up to the plan depth). */
+    nonReelsKept: num("NON_REELS_KEPT", 20),
   },
 
   outlier: {

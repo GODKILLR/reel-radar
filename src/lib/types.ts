@@ -5,7 +5,6 @@ export interface Post {
   hashtags: string[] | null;
   mentions: string[] | null;
   thumbnail_url: string | null;
-  video_url: string | null;
   post_type: string | null;
   product_type: string | null;
   is_reel: boolean;

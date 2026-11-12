@@ -170,7 +170,7 @@ async function main() {
   check("free: 10 accounts, $0", [PLANS.free.maxAccounts, PLANS.free.priceUsd], [10, 0]);
   check("pro: 20 accounts, $1", [PLANS.pro.maxAccounts, PLANS.pro.priceUsd], [20, 1]);
   check("ultra: 100 accounts, $2", [PLANS.ultra.maxAccounts, PLANS.ultra.priceUsd], [100, 2]);
-  check("every plan shows the latest 200 reels", REELS_PER_ACCOUNT, 200);
+  check("every plan shows the latest 100 reels", REELS_PER_ACCOUNT, 100);
   check("every plan refreshes daily", REFRESH_HOURS, 24);
   check("plans only differ by account count (no points fields)", Object.keys(PLANS.free).sort().join(","), "blurb,id,maxAccounts,name,priceUsd");
   check("unknown plan falls back to free", planOf("platinum").id, "free");

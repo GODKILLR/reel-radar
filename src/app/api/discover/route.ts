@@ -39,7 +39,7 @@ export async function GET() {
     `
     SELECT
       p.shortcode, p.url, p.caption, p.hashtags, p.mentions,
-      p.thumbnail_url, p.video_url,
+      p.thumbnail_url,
       p.post_type, p.product_type, p.is_reel, p.duration_sec, p.posted_at,
       p.views, p.reach, p.likes, p.comments, p.is_paid_partnership,
       p.audio_id, p.audio_song, p.audio_artist, p.audio_is_original,

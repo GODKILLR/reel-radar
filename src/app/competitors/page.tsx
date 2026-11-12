@@ -142,7 +142,7 @@ export default function AccountsPage() {
       <p className="mb-6 mt-3 max-w-xl text-base text-[var(--muted)]">
         Tracked accounts are refreshed automatically
         {limits ? ` about every ${limits.refreshHours} hours` : ""}, and you see
-        up to their latest {limits?.reelsPerAccount ?? 200} reels.
+        up to their latest {limits?.reelsPerAccount ?? 100} reels.
       </p>
 
       {me && !me.user.isAdmin && (
