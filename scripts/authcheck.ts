@@ -31,8 +31,12 @@ import {
   splitPools,
   refreshHoursFor,
   accountPhase,
+  recentlyBackfilled,
   type Competitor,
 } from "../src/lib/poller";
+import { accountsWithoutViews } from "../src/lib/views";
+import { officialAdapter } from "../src/lib/actors/official";
+import { normalizePost, type NormalizedPost } from "../src/lib/apify";
 import {
   PLANS,
   PUBLIC_PLANS,
@@ -222,6 +226,7 @@ async function main() {
     backfilled_at: null,
     last_scraped_at: null,
     is_curated: false,
+    views_source: null,
     platform_trackers: 0,
     key_owner_ids: [],
     ...over,
@@ -240,6 +245,24 @@ async function main() {
   check("a user's account goes to that user's own key", pools.byUser.get("9")?.some((c) => c.username === "mine"), true);
   check("two key owners: deterministic single owner (lowest id)", [pools.byUser.get("9")?.some((c) => c.username === "twokeys"), pools.byUser.has("12")], [true, false]);
   check("account with no working key is in NO pool (never silently becomes our cost)", [pools.platform.some((c) => c.username === "paused"), [...pools.byUser.values()].flat().some((c) => c.username === "paused")], [false, false]);
+  // ---- views missing from the cheap collector ----
+  const reel = (username: string, views: number, isReel = true) =>
+    ({ username, views, isReel }) as unknown as NormalizedPost;
+  check("3 reels, no views at all -> flagged", accountsWithoutViews([reel("a", 0), reel("a", 0), reel("a", 0)]), ["a"]);
+  check("any reel with views -> NOT flagged", accountsWithoutViews([reel("a", 0), reel("a", 0), reel("a", 5)]), []);
+  check("only 2 reels with no views -> not enough to judge", accountsWithoutViews([reel("a", 0), reel("a", 0)]), []);
+  check("photo posts are ignored", accountsWithoutViews([reel("a", 0, false), reel("a", 0, false), reel("a", 0, false)]), []);
+  check("judged per account", accountsWithoutViews([reel("a", 0), reel("a", 0), reel("a", 0), reel("b", 9), reel("b", 0), reel("b", 0)]), ["a"]);
+  check("empty input", accountsWithoutViews([]), []);
+  check("hidden likes (-1) clamp to 0 on the official collector", officialAdapter.normalize({ shortCode: "x", ownerUsername: "u", timestamp: "2026-11-01T00:00:00Z", productType: "clips", videoPlayCount: 10, likesCount: -1, commentsCount: 4 })?.likes, 0);
+  check("official collector keeps real views", officialAdapter.normalize({ shortCode: "x", ownerUsername: "u", timestamp: "2026-11-01T00:00:00Z", videoPlayCount: 2647, likesCount: -1, commentsCount: 42 })?.views, 2647);
+  check("normalizePost picks the collector by key (official reads videoPlayCount)", normalizePost({ shortCode: "x", ownerUsername: "u", timestamp: "2026-11-01T00:00:00Z", videoPlayCount: 77 }, "official")?.views, 77);
+  check("same item through the default collector yields nothing (different field names)", normalizePost({ shortCode: "x", ownerUsername: "u", timestamp: "2026-11-01T00:00:00Z", videoPlayCount: 77 }), null);
+
+  check("history fetched 2h ago -> no deeper sweep yet", recentlyBackfilled({ backfilled_at: new Date(Date.now() - 2 * 3_600_000).toISOString() }, Date.now()), true);
+  check("history fetched 30h ago -> sweep allowed", recentlyBackfilled({ backfilled_at: new Date(Date.now() - 30 * 3_600_000).toISOString() }, Date.now()), false);
+  check("never fetched -> not 'recent'", recentlyBackfilled({ backfilled_at: null }, Date.now()), false);
+
   // ---- account lifecycle: who may touch an account's first collection ----
   const nowMs = Date.now();
   const ago = (min: number) => new Date(nowMs - min * 60_000).toISOString();

@@ -81,7 +81,8 @@ export const officialAdapter: ActorAdapter = {
       postedAt,
       views: Math.max(int(raw.videoPlayCount), int(raw.videoViewCount)),
       reach: int(raw.videoViewCount),
-      likes: int(raw.likesCount),
+      // Instagram reports -1 when an account hides its like counts.
+      likes: Math.max(0, int(raw.likesCount)),
       comments: int(raw.commentsCount),
       isPaidPartnership: Boolean(raw.paidPartnership),
       audioId: str(music.audio_id),

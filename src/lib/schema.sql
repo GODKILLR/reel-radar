@@ -174,6 +174,33 @@ ALTER TABLE scrape_runs ADD COLUMN IF NOT EXISTS hook_nonce TEXT;
 CREATE INDEX IF NOT EXISTS scrape_runs_nonce_idx ON scrape_runs (hook_nonce)
   WHERE hook_nonce IS NOT NULL;
 
+-- Some accounts' reels come back from the cheap collector with NO view counts
+-- (every reel shows 0). Those accounts are switched to the fuller collector.
+--   NULL      = default (cheap) collector
+--   'official' = fuller collector, which reports views for them
+ALTER TABLE competitors ADD COLUMN IF NOT EXISTS views_source TEXT;
+ALTER TABLE scrape_runs ADD COLUMN IF NOT EXISTS adapter TEXT;
+
+-- Self-heal (idempotent): an account with at least 3 reels and not one of them
+-- showing any views was collected without view data. Switch it over and mark it
+-- for a fresh collection, which fills the views in.
+WITH healed AS (
+  UPDATE competitors c
+  SET views_source = 'official', backfilled_at = NULL, last_scraped_at = NULL
+  WHERE c.views_source IS NULL
+    AND (SELECT COUNT(*) FROM posts p WHERE p.competitor_id = c.id AND p.is_reel) >= 3
+    AND NOT EXISTS (
+      SELECT 1 FROM posts p
+      WHERE p.competitor_id = c.id AND p.is_reel AND p.views > 0
+    )
+  RETURNING c.id
+)
+-- The cheap collector's like counts for these accounts are not trustworthy
+-- (a small placeholder when likes are hidden); clear them so the fuller
+-- collector's figures replace them.
+UPDATE posts SET likes = 0
+WHERE competitor_id IN (SELECT id FROM healed);
+
 -- Accounts featured in the Discover tab. Off by default: nothing is shown to
 -- other users until an admin turns it on.
 ALTER TABLE competitors

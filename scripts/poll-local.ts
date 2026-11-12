@@ -101,7 +101,7 @@ async function main() {
   console.log(`  dataset items: ${raw.length}`);
 
   const normalized = raw
-    .map(normalizePost)
+    .map((item) => normalizePost(item))
     .filter((p): p is NonNullable<typeof p> => p !== null);
   const dropped = raw.length - normalized.length;
   if (dropped > 0) console.log(`  dropped ${dropped} unparseable item(s)`);

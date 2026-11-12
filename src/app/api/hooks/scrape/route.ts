@@ -10,6 +10,8 @@ import {
 import { ingestPosts } from "@/lib/ingest";
 import { dispatchOutlierAlerts } from "@/lib/alerts";
 import { checkToken, getUserToken, saveCheck, setStatus } from "@/lib/collector";
+import { runForUser, runPlatformNow } from "@/lib/poller";
+import { accountsWithoutViews } from "@/lib/views";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -31,6 +33,8 @@ interface RunRow {
   usernames: string[] | null;
   owner_user_id: string | null;
   status: string;
+  /** Which collector produced this run's data (null = the default one). */
+  adapter: string | null;
 }
 
 /**
@@ -50,7 +54,8 @@ export async function POST(req: NextRequest) {
 
   const run = await queryOne<RunRow>(
     `
-    SELECT id, apify_run_id, tier, usernames, owner_user_id::text AS owner_user_id, status
+    SELECT id, apify_run_id, tier, usernames, owner_user_id::text AS owner_user_id,
+           status, adapter
     FROM scrape_runs WHERE hook_nonce = $1
     `,
     [nonce]
@@ -137,7 +142,9 @@ export async function POST(req: NextRequest) {
     const raw = await fetchDatasetItems(datasetId, token);
     const wanted = new Set((run.usernames ?? []).map((u) => u.toLowerCase()));
     const normalized = raw
-      .map(normalizePost)
+      // Each item is read with the collector that produced it (stored on the
+      // run), never by passing normalizePost straight to map().
+      .map((item) => normalizePost(item, run.adapter))
       .filter((p): p is NonNullable<typeof p> => p !== null)
       // Only accept posts for accounts this run was actually asked to collect.
       .filter((p) => wanted.size === 0 || wanted.has(p.username.toLowerCase()));
@@ -182,8 +189,52 @@ export async function POST(req: NextRequest) {
       await saveCheck(ownerId, await checkToken(token)).catch(() => {});
     }
 
+    // Some accounts' reels come back from the cheap collector with no view
+    // counts at all. Move such an account to the fuller collector and collect
+    // it again straight away, on the same key, so the views fill in without the
+    // user doing anything. (Runs already on the fuller collector are not
+    // second-guessed, so this can never loop.)
+    let recollecting: string[] = [];
+    if (!run.adapter) {
+      const missing = accountsWithoutViews(normalized);
+      if (missing.length > 0) {
+        const switched = await query<{ username: string }>(
+          `
+          UPDATE competitors
+          SET views_source = 'official', backfilled_at = NULL, last_scraped_at = NULL
+          WHERE username = ANY($1::text[]) AND views_source IS NULL
+          RETURNING username
+          `,
+          [missing]
+        );
+        recollecting = switched.map((s) => s.username);
+        if (recollecting.length > 0) {
+          // Whatever like counts the cheap collector gave for these accounts
+          // are not trustworthy (it reports a small placeholder when likes are
+          // hidden), and counters are never allowed to go down on update, so
+          // clear them and let the fuller collector's figures win.
+          await query(
+            `
+            UPDATE posts SET likes = 0
+            WHERE competitor_id IN (SELECT id FROM competitors WHERE username = ANY($1::text[]))
+            `,
+            [recollecting]
+          );
+          try {
+            if (ownerId !== null) await runForUser(ownerId);
+            else await runPlatformNow();
+          } catch (err) {
+            // Best effort: the account is already marked, so the next request
+            // from the user (or the scheduler) collects it.
+            console.error("re-collect failed:", err instanceof Error ? err.message : err);
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       ok: true,
+      recollecting,
       rawItems: raw.length,
       ingested: result.seen,
       newPosts: result.inserted,

@@ -21,11 +21,15 @@ function auth(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
-/** Normalizes one raw dataset item using the configured actor's adapter. */
+/**
+ * Normalizes one raw dataset item. `adapterKey` names the collector that
+ * produced it (stored on the run); omit it for the default one.
+ */
 export function normalizePost(
-  raw: Record<string, unknown>
+  raw: Record<string, unknown>,
+  adapterKey?: string | null
 ): NormalizedPost | null {
-  return getAdapter().normalize(raw);
+  return getAdapter(adapterKey ?? undefined).normalize(raw);
 }
 
 interface StartRunOptions {
@@ -62,9 +66,10 @@ export class CollectorHttpError extends Error {
  */
 export async function startRun(
   opts: StartRunOptions,
-  token: string = config.apify.token
+  token: string = config.apify.token,
+  adapterKey?: string
 ): Promise<ApifyRunStarted> {
-  const adapter = getAdapter();
+  const adapter = getAdapter(adapterKey);
   const input = adapter.buildInput({
     usernames: opts.usernames,
     windowDays: opts.windowDays,

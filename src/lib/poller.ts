@@ -17,6 +17,8 @@ export interface Competitor {
   backfilled_at: string | null;
   last_scraped_at: string | null;
   is_curated: boolean;
+  /** null = default collector; 'official' = the one that reports views for it. */
+  views_source: string | null;
   /** Tracked by this many admins, whose collection we run ourselves. */
   platform_trackers: number;
   /** Tracking users who collect on their own key and whose key works. */
@@ -53,6 +55,7 @@ export async function loadCandidates(): Promise<Competitor[]> {
   return query<Competitor>(
     `
     SELECT c.id, c.username, c.backfilled_at, c.last_scraped_at, c.is_curated,
+           c.views_source,
            (COUNT(DISTINCT u.id)
               FILTER (WHERE u.is_admin AND u.collector_key_enc IS NULL))::int
              AS platform_trackers,
@@ -122,23 +125,42 @@ function hookUrl(nonce: string): string {
   return `${config.baseUrl}/api/hooks/scrape?n=${encodeURIComponent(nonce)}`;
 }
 
-function estimate(count: number, limitPerProfile: number): number {
-  const adapter = getAdapter();
+function estimate(
+  count: number,
+  limitPerProfile: number,
+  adapterKey?: string
+): number {
+  const adapter = getAdapter(adapterKey);
   // Worst case: every profile returns a full page.
   return count * limitPerProfile * adapter.costPerPostUsd + adapter.startCostUsd;
 }
 
 class SkipPool extends Error {}
 
+/**
+ * Accounts are collected with the cheap default collector unless it is known
+ * not to report views for them, in which case they use the fuller one. One
+ * tier may therefore become two runs.
+ */
+function groupByCollector(list: Competitor[]): { key?: string; list: Competitor[] }[] {
+  const full = list.filter((c) => c.views_source === "official");
+  const cheap = list.filter((c) => c.views_source !== "official");
+  return [
+    ...(cheap.length ? [{ list: cheap }] : []),
+    ...(full.length ? [{ key: "official", list: full }] : []),
+  ];
+}
+
 async function launch(
   tier: Tier,
   competitors: Competitor[],
   windowDays: number,
   limitPerProfile: number,
-  ctx: Ctx
+  ctx: Ctx,
+  adapterKey?: string
 ): Promise<LaunchedRun> {
   const usernames = competitors.map((c) => c.username);
-  const estimatedCostUsd = estimate(usernames.length, limitPerProfile);
+  const estimatedCostUsd = estimate(usernames.length, limitPerProfile, adapterKey);
 
   // A user's run must fit in their remaining credit, otherwise it would die
   // half way and still bill them for what it fetched.
@@ -153,11 +175,11 @@ async function launch(
   const nonce = randomBytes(24).toString("base64url");
   const [row] = await query<{ id: number }>(
     `
-    INSERT INTO scrape_runs (tier, usernames, status, owner_user_id, hook_nonce)
-    VALUES ($1, $2, 'starting', $3, $4)
+    INSERT INTO scrape_runs (tier, usernames, status, owner_user_id, hook_nonce, adapter)
+    VALUES ($1, $2, 'starting', $3, $4, $5)
     RETURNING id
     `,
-    [tier, usernames, ctx.ownerUserId, nonce]
+    [tier, usernames, ctx.ownerUserId, nonce, adapterKey ?? null]
   );
 
   let runId: string;
@@ -169,7 +191,8 @@ async function launch(
         limitPerProfile,
         webhookUrl: hookUrl(nonce),
       },
-      ctx.token
+      ctx.token,
+      adapterKey
     );
     runId = run.runId;
   } catch (err) {
@@ -214,6 +237,17 @@ export function accountPhase(
   return now - new Date(c.backfilled_at).getTime() > BACKFILL_TIMEOUT_MS
     ? "new"
     : "pending";
+}
+
+/** History was fetched less than a day ago, so a deeper sweep would add nothing. */
+export function recentlyBackfilled(
+  c: Pick<Competitor, "backfilled_at">,
+  now: number
+): boolean {
+  return (
+    !!c.backfilled_at &&
+    now - new Date(c.backfilled_at).getTime() < 24 * 3_600_000
+  );
 }
 
 /** Atomically marks accounts as "history fetch in progress"; returns the ones WE got. */
@@ -294,20 +328,21 @@ async function runPool(
     const claimed =
       opts.force === "backfill" ? ids : await claimBackfill(ids);
     const targets = backfillTargets.filter((c) => claimed.includes(c.id));
-    if (targets.length > 0) {
+    for (const group of groupByCollector(targets)) {
       try {
         launched.push(
           await launch(
             "backfill",
-            targets,
+            group.list,
             config.backfill.windowDays,
             config.backfill.limitPerProfile,
-            ctx
+            ctx,
+            group.key
           )
         );
       } catch (err) {
         // The run never started: hand the accounts back so they retry later.
-        if (opts.force !== "backfill") await unclaimBackfill(targets.map((c) => c.id));
+        if (opts.force !== "backfill") await unclaimBackfill(group.list.map((c) => c.id));
         throw err;
       }
     }
@@ -316,33 +351,42 @@ async function runPool(
   if (established.length === 0) return launched;
 
   if ((!opts.force || opts.force === "hot") && dueNow.length > 0) {
-    launched.push(
-      await launch(
-        "hot",
-        dueNow,
-        config.hot.windowDays,
-        config.hot.limitPerProfile,
-        ctx
-      )
-    );
+    for (const group of groupByCollector(dueNow)) {
+      launched.push(
+        await launch(
+          "hot",
+          group.list,
+          config.hot.windowDays,
+          config.hot.limitPerProfile,
+          ctx,
+          group.key
+        )
+      );
+    }
   }
 
-  // Warm sweep is time-gated rather than every cycle.
+  // Warm sweep is time-gated rather than every cycle, and skips accounts whose
+  // history was fetched less than a day ago: sweeping them straight after a
+  // 200-post history fetch would just pay for the same posts twice.
+  const sweepable = established.filter((c) => !recentlyBackfilled(c, now));
   const lastWarm = await lastWarmStart(ctx.ownerUserId);
   const warmDue =
     lastWarm === null ||
     Date.now() - lastWarm > config.warm.everyHours * 3_600_000;
 
-  if (warmDue || opts.force === "warm") {
-    launched.push(
-      await launch(
-        "warm",
-        established,
-        config.warm.windowDays,
-        config.warm.limitPerProfile,
-        ctx
-      )
-    );
+  if ((warmDue || opts.force === "warm") && sweepable.length > 0) {
+    for (const group of groupByCollector(sweepable)) {
+      launched.push(
+        await launch(
+          "warm",
+          group.list,
+          config.warm.windowDays,
+          config.warm.limitPerProfile,
+          ctx,
+          group.key
+        )
+      );
+    }
   }
   return launched;
 }
@@ -481,6 +525,7 @@ async function loadUserPool(userId: number): Promise<Competitor[]> {
   return query<Competitor>(
     `
     SELECT c.id, c.username, c.backfilled_at, c.last_scraped_at, c.is_curated,
+           c.views_source,
            (SELECT COUNT(*)::int
               FROM user_competitors uc2 JOIN users u2 ON u2.id = uc2.user_id
              WHERE uc2.competitor_id = c.id
@@ -552,7 +597,7 @@ export async function runForUser(
 
   const lastWarm = await lastWarmStart(userId);
   const warmWanted =
-    established.length > 0 &&
+    established.some((c) => !recentlyBackfilled(c, now)) &&
     (lastWarm === null ||
       now - lastWarm > config.warm.everyHours * 3_600_000) &&
     !cooling;

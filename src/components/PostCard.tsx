@@ -164,7 +164,11 @@ export default function PostCard({ post, onToggleWatch, onPickAudio }: Props) {
         </div>
 
         <div className="nums grid grid-cols-3 divide-x-2 rounded-xl border-2 text-center">
-          <Metric label="likes" value={compactNumber(likes)} />
+          <Metric
+            label="likes"
+            value={likes > 0 ? compactNumber(likes) : "—"}
+            title={likes > 0 ? undefined : "This account hides its like counts"}
+          />
           <Metric label="comments" value={compactNumber(comments)} />
           <Metric
             label="engage"
