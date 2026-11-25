@@ -2,7 +2,7 @@
 
 Instagram outlier finder. Users track competitor accounts and the app flags
 reels that beat their own account's median views (default 3x). It is a free
-lead-magnet tool for Star Labs' audience. Live: https://reel-radar-chi.vercel.app
+lead-magnet tool for Star Labs' audience. Live: https://reel-radar-starlabs.vercel.app
 (Vercel project `reel-radar`, auto-deploys on push to `main` of
 `GODKILLR/reel-radar`). Database: Postgres on Neon.
 

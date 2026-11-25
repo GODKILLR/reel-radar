@@ -1,277 +1,166 @@
 ﻿# Reel Radar
 
-Tracks what your Instagram competitors post, refreshes every 2 hours via Apify,
-and surfaces which of their reels are actually outperforming â€” so you can spot a
-working idea while it is still working.
+Reel Radar is a free, open-source tool that finds the Instagram reels beating
+their own account's average, so you can spot a working idea while it is still
+working.
 
-Replaces the manual "save each competitor's reel and check back later" loop.
+Built by [Star Labs](https://starlabsstudio.com). Live app:
+[reel-radar-starlabs.vercel.app](https://reel-radar-starlabs.vercel.app).
+Non-developer setup guide: [starlabsstudio.com/reel-radar](https://starlabsstudio.com/reel-radar/).
 
----
+It replaces the manual loop of saving each competitor's reel and checking back
+later. You add accounts by handle. Reel Radar collects their reels and flags the
+outliers.
 
 ## What it does
 
-- **Add an account by handle.** Paste `natgeo`, `@natgeo`, or a profile URL. Its
-  post history is backfilled once, then kept fresh.
-- **One feed, all competitors.** Every tracked post in a grid, sortable by newest,
-  most views, fastest growing, biggest outlier, most likes, or best engagement.
-  Filter by account, period, reels-only, outliers-only, or saved.
+- **Add an account by handle.** Paste `natgeo`, `@natgeo`, or a profile URL. The
+  latest reels are collected once, then kept fresh.
+- **One feed, all accounts.** Sort by newest, most views, fastest growing,
+  biggest outlier, most likes, or best engagement. Filter by account, period,
+  reels only, outliers only, or saved.
 - **Outlier detection.** A reel is flagged when its views reach a multiple
-  (default 3Ã—) of *that account's own median*. This is the number that matters:
-  raw view counts just tell you who has the most followers, whereas 5Ã— the median
-  means the idea beat the account's own baseline.
-- **View velocity.** Because it polls every 2 hours, it keeps a view time series
-  and shows views/hour. You see a reel climbing today, not next week.
-- **Watchlist.** Star a reel into a to-recreate board with an
-  idea â†’ scripted â†’ filmed â†’ posted status.
-- **Alerts.** Telegram and/or email when a competitor posts a new outlier. Each
-  reel alerts once, ever.
-- **Trending audio.** Click the â™ª chip on any reel to see every tracked reel
-  riding that same sound.
-- **Replay ratio.** Instagram exposes both plays and accounts-reached; the ratio
-  is a decent proxy for how loopable a hook is.
-- **Spend tracking.** Rolling 24-hour and 30-day Apify cost, on the Competitors
-  page. Cost never becomes a month-end surprise.
+  (default 3x) of *that account's own median*. Raw view counts only tell you who
+  has the most followers. 5x the median means the idea beat the account's own
+  baseline.
+- **View velocity.** Reels keep a time series of snapshots, so you can see views
+  per hour and spot a reel that is climbing today.
+- **Watchlist.** Save a reel to a to-recreate board with an
+  idea, scripted, filmed, posted status.
+- **Discover.** Outliers from accounts an admin has marked "Featured". It works
+  without connecting your own key.
+- **Alerts (optional).** Telegram and/or email when a tracked account posts a new
+  outlier. Each reel alerts once.
 
----
+## How it works
 
-## How the polling works
+Everyone brings their own [Apify](https://apify.com) API key. A user signs up
+with email and password, then pastes their key on the Accounts page. Reel Radar
+verifies it, stores it **encrypted** (AES-256-GCM, bound to the user id, needs
+`KEY_ENCRYPTION_SECRET`), and collects that user's accounts on *their own*
+monthly free credit. The key is never sent back to the browser, only its last
+4 characters. Without a working key a user can browse Discover but cannot track
+accounts.
 
-Vercel functions time out long before an Apify scrape finishes, so the work is
-split in two and nothing blocks:
+**Plans only set how many accounts a user can track** (defined in
+`src/lib/plans.ts`): Free 10, Pro 20, Ultra 100. Every plan shows the latest 100
+reels per account with unlimited saved ideas. There is no payment provider
+connected. An admin switches plans by hand on `/admin`.
+
+### Collection happens on request
+
+Adding an account, opening the feed, connecting a key, or pressing **Refresh
+now** calls `POST /api/collect`. That collects whatever the user's accounts need:
+new accounts immediately, stale ones when due, plus a weekly deeper sweep. It is
+cheap to call, and when nothing is due it answers without contacting Apify. A
+refresh is throttled to once per 15 minutes per user, and a new account's first
+fetch is claimed atomically so two requests never pay for it twice.
+
+Apify scrapes take minutes, longer than a serverless function can wait, so the
+work is split in two:
 
 ```
-cron (every 2h)  â”€â”€â–¶  queues ONE Apify run for all accounts  â”€â”€â–¶  returns in <1s
-                                      â”‚
-                      Apify scrapes (minutes), then calls back
-                                      â–¼
-            /api/webhooks/apify  â”€â”€â–¶  upsert posts
-                                      write metrics snapshot
-                                      recompute outliers + velocity
-                                      send alerts
+POST /api/collect  -->  queues an Apify run  -->  returns immediately
+                                  |
+                  Apify scrapes, then calls back
+                                  v
+        POST /api/hooks/scrape  -->  upsert posts
+                                     write metrics snapshot
+                                     recompute outliers + velocity
+                                     send alerts
 ```
 
-The actor accepts an array of usernames, so 20 competitors cost one run, not 20.
+- **Who pays.** Featured and admin-tracked accounts run on the platform key.
+  Every other account runs on its owner's own key. An account whose owner has no
+  working key is collected by nobody and never falls onto the platform bill.
+- **Callbacks use single-use tokens.** Each run has its own nonce (`?n=`), never
+  a global secret, because the callback URL is visible inside the user's own
+  Apify account. Results are accepted only for the accounts that run was asked to
+  collect.
+- **Two collectors.** The default is the low-cost
+  `sones/instagram-posts-scraper-lowcost` (about $0.0003 per post). Some
+  accounts come back from it with no view counts. When a run has at least 3 reels
+  and none has views, that account switches to `apify/instagram-post-scraper`
+  (about $0.0027 per post) and is re-collected automatically.
+- **Small database.** Per account it keeps the newest 100 reels (plus 20 photos),
+  a caption cut to 300 characters, and only the latest few metric snapshots. A
+  daily clean-up keeps a free 1 GB Postgres comfortable.
 
-### Three tiers, so a 2-hour cadence stays affordable
+## Tech stack
 
-Re-scraping each competitor's entire back catalogue twelve times a day would be
-pure waste â€” a six-month-old reel's view count barely moves.
+Next.js (App Router), React, TypeScript, Tailwind CSS, Postgres (any provider,
+[Neon](https://neon.tech) works well), deployed on Vercel.
 
-| Tier | Window | Frequency | Purpose |
-|---|---|---|---|
-| `backfill` | 180 days, 150 posts | once, when added | establishes the median baseline |
-| `hot` | 2 days, 8 posts | every cycle | new posts + accurate velocity |
-| `warm` | 30 days, 60 posts | every 72h | catches late bloomers |
-
-All windows are env-tunable â€” see `.env.example`.
-
----
-
-## Cost
-
-Two scrapers are supported; `APIFY_ACTOR` picks one. Both return the **same view
-counts** (verified: the same reel read 58,370,708 vs 58,370,605 across the two,
-a 0.0002% drift that is just real growth between calls).
-
-| | `lowcost` (default) | `official` |
-|---|---|---|
-| Actor | `sones/instagram-posts-scraper-lowcost` | `apify/instagram-post-scraper` |
-| Per post | **$0.0003** | $0.0027 |
-| Per run | $0.005 | none |
-| Views, likes, comments, duration | yes | yes |
-| Profile pictures | **yes** | no |
-| Reach / replay ratio | no | yes |
-| Trending audio (`audio_id`) | no | yes |
-| Hashtags, mentions | parsed from caption | structured arrays |
-| First-party | no (8 reviews) | yes |
-
-The low-cost actor is ~9x cheaper per post and the default. Switch with
-`APIFY_ACTOR=official` if you want replay ratio and trending-audio grouping, or
-if the third-party actor ever breaks.
-
-### Monthly cost on `lowcost`
-
-One run covers every account at once, so the $0.005 start fee does not scale
-with how many competitors you track. Assuming each posts ~1.5 reels/day
-(3 per 2-day hot window) and a weekly warm sweep:
-
-| Accounts | Poll every | Hot | Warm | **Total/month** |
-|---|---|---|---|---|
-| 5 | 2h | $3.42 | $0.41 | **$3.83** |
-| 10 | 2h | $5.04 | $0.79 | **$5.83** |
-| 15 | 2h | $6.66 | $1.18 | **$7.84** |
-| 20 | 2h | $8.28 | $1.56 | **$9.84** |
-| 25 | 2h | $9.90 | $1.95 | **$11.85** |
-| 20 | 4h | $4.14 | $1.56 | **$5.70** |
-| 25 | 6h | $3.30 | $1.95 | **$5.25** |
-
-Apify's free plan includes **$10/month**, so up to about 20 accounts at 2-hour
-polling fits without paying anything. Past that, either slow the interval or top
-up. The same setup on the `official` actor costs roughly 9x more, which is why
-it is not the default.
-
-Rolling 24-hour and 30-day spend is shown on the Competitors page, read from
-Apify's own billing figure for each run rather than an estimate.
-
-## Setup
+## Self-hosting
 
 ### 1. Postgres
 
-Any Postgres works. Easiest is [Neon](https://neon.tech) (free tier is ample).
-**Use the pooled connection string** â€” serverless functions open many short
-connections.
+Any Postgres works. Use the **pooled** connection string, since serverless
+functions open many short connections.
 
-### 2. Apify token
-
-[console.apify.com/settings/integrations](https://console.apify.com/settings/integrations)
-
-### 3. Configure
+### 2. Configure
 
 ```bash
 cp .env.example .env
 ```
 
-Fill in `APIFY_TOKEN`, `DATABASE_URL`, and two secrets:
+Fill in `DATABASE_URL`, `APIFY_TOKEN` (the platform key, used for featured
+accounts), `APP_BASE_URL` (your public URL, which Apify calls back to, so it
+cannot be localhost), and generate the secrets:
 
 ```bash
 openssl rand -hex 32   # CRON_SECRET
 openssl rand -hex 32   # WEBHOOK_SECRET
+openssl rand -hex 32   # KEY_ENCRYPTION_SECRET (back this up: losing it makes
+                       # every stored user key unreadable)
 ```
 
-### 4. Deploy
+All other variables are optional tuning knobs with defaults. See `.env.example`.
+
+### 3. Deploy
 
 ```bash
 npx vercel login
-npx vercel link            # pick the existing reel-radar project
-npm run push-env           # pipes the secrets from .env into Vercel
+npx vercel link
+npm run push-env      # pipes secrets from .env into Vercel without printing them
 npx vercel --prod
 ```
 
-`npm run push-env` reads `.env` and feeds each secret to the Vercel CLI over
-stdin, so values are never printed or logged. Re-running it is safe. The
-non-secret tuning variables can be set the same way or left to the defaults in
-`src/lib/config.ts`.
+New Vercel projects enable SSO protection, which blocks Apify's callback. Turn it
+off under Settings, Deployment Protection, once the app's own sign-in is
+deployed.
 
-Note that Vercel enables **SSO protection** on new projects, which blocks
-Apify's webhook and the external cron from reaching the app. Turn it off under
-Settings -> Deployment Protection, but only *after* the account system below is
-deployed, since in-app sign-in is what replaces it.
-
-Set `APP_BASE_URL` to your production URL. **Apify calls back to it**, so it
-must be publicly reachable â€” this is the one variable that cannot point at
-localhost.
-
-### 5. Create the tables
+### 4. Create the tables
 
 ```bash
-curl -X POST "https://your-app.vercel.app/api/admin/migrate?secret=$CRON_SECRET"
+npm run migrate       # additive and safe to re-run
 ```
 
-Safe to re-run.
+### 5. Make yourself admin
 
-### 6. Schedule the poll
-
-âš ï¸ **Vercel's Hobby plan caps cron at once per day**, and declaring anything more
-frequent in `vercel.json` makes the *deployment* fail outright with
-`cron_jobs_limits_reached`. So `vercel.json` declares no crons and scheduling is
-external. See [CRON.md](CRON.md).
-
-Point a free scheduler ([cron-job.org](https://cron-job.org) or GitHub Actions) at:
-
-```
-https://your-app.vercel.app/api/cron?secret=YOUR_CRON_SECRET
-```
-
-The endpoint accepts `Authorization: Bearer <CRON_SECRET>` or `?secret=`, so it
-works with either.
-
-### 7. Add competitors
-
-Open the app â†’ **Competitors** â†’ paste handles. History lands on the next poll.
-To not wait:
+Sign up in the app, then:
 
 ```bash
-curl "https://your-app.vercel.app/api/cron?secret=$CRON_SECRET"
+npm run make-admin -- you@example.com
 ```
+
+On `/admin`, switch on the accounts you want to appear in Discover.
+
+### 6. Scheduler (optional)
+
+Collection is on request, so a scheduler is only a safety net for featured
+accounts. Vercel's Hobby plan allows cron once a day, and declaring anything more
+frequent in `vercel.json` fails the deployment, so scheduling is external. See
+[CRON.md](CRON.md).
 
 ### Alerts (optional)
 
-**Telegram** â€” message [@BotFather](https://t.me/botfather), `/newbot`, copy the
-token. Get your chat id by messaging your bot then opening
-`https://api.telegram.org/bot<TOKEN>/getUpdates`. Set `TELEGRAM_BOT_TOKEN` and
-`TELEGRAM_CHAT_ID`.
+**Telegram:** message [@BotFather](https://t.me/botfather), run `/newbot`, and set
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+**Email:** set `RESEND_API_KEY`, `ALERT_EMAIL_TO`, and `ALERT_EMAIL_FROM`
+([resend.com](https://resend.com)).
 
-**Email** â€” set `RESEND_API_KEY`, `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM`
-([resend.com](https://resend.com), free tier is fine).
-
-Both can be set; both fire. Neither set means alerts are silently skipped and
-everything else still works. The first backfill claims its outliers *silently*,
-so adding 20 accounts does not fire hundreds of notifications on day one.
-
----
-
-## Accounts and plans
-
-**Everyone brings their own key.** Users sign up with email + password
-(`/signup`), then paste their own Apify API token on the Accounts page. We verify
-it, store it **encrypted** (AES-256-GCM, bound to their user id, needs
-`KEY_ENCRYPTION_SECRET`) and collect their accounts on *their* monthly free
-credit. The token is never sent back to the browser (only its last 4 characters).
-Without a working key a user can browse Discover but cannot track accounts.
-
-There are no points and no usage meters. **A plan only sets how many accounts a
-user can track**, and lives in `src/lib/plans.ts`:
-
-| | Free | Pro | Ultra |
-|---|---|---|---|
-| Price | $0 | $1 / month | $2 / month |
-| Accounts tracked | 10 | 20 | 100 |
-
-Every plan shows the latest 100 reels per account, refreshed daily, with
-unlimited saved ideas. Prices are display-only until a payment provider is
-connected; paid plans are switched on by hand from `/admin` for now.
-
-- **Who pays for what.** Each cycle runs one pool on our key (featured accounts
-  and accounts an admin tracks) and one pool per user on that user's own key. A
-  user's broken key or empty credit only pauses their own accounts; those never
-  fall back onto our bill. Our collection cost is therefore only the featured
-  accounts.
-- **Collection happens on request, not on a timer.** Adding an account, opening
-  the feed or Accounts page, connecting a key, or pressing **Refresh now** calls
-  `POST /api/collect`, which collects whatever that user's accounts need on their
-  own key (new accounts immediately, stale ones when due, a weekly deeper sweep).
-  It is cheap to call: when nothing is due it answers without contacting the
-  collector. A refresh is throttled to once per 15 minutes per user, and a new
-  account's first fetch is claimed atomically so two requests can never pay for
-  it twice. The external scheduler (`/api/cron`) is now only a safety net for
-  featured accounts; admins can also press **Collect featured accounts now** on
-  `/admin`.
-- **Credit.** Before each run we read the user's remaining credit and skip runs
-  that would not fit. Out-of-credit users are re-checked every cycle and resume
-  by themselves when their credit renews.
-- **Callbacks.** Run-completion callbacks use a single-use per-run token
-  (`?n=`), never a global secret, because that URL is visible inside the user's
-  own collector account. Results are only accepted for the accounts that run was
-  asked to collect.
-- **Shared data.** Posts are collected once however many users track an account.
-  Per-user: which accounts they track and their saved ideas. An account nobody
-  tracks (and that is not featured) stops being collected.
-- **Admin.** `/admin` shows users, their key status, featured accounts and
-  collection spend (only runs on our key). Its API returns 404 to non-admins.
-
-**Discover** shows outliers from accounts an admin has switched to "Featured" on
-`/admin`. Nothing is featured by default.
-
-**Going live** (one time, in order):
-
-1. Apply the schema: `npm run migrate` (additive and idempotent).
-2. Add `KEY_ENCRYPTION_SECRET` to the host (keep a backup: losing it makes every
-   stored user key unreadable), deploy, and check `APP_BASE_URL`.
-3. Sign up in the app, then:
-   `npm run make-admin -- you@example.com --claim-legacy`.
-4. On `/admin`, switch on the accounts you want in Discover.
-
-connected.
+If neither is set, alerts are skipped and everything else still works.
 
 ## Local development
 
@@ -280,84 +169,55 @@ npm install
 npm run dev
 ```
 
-Reads work locally against the same `DATABASE_URL`. Polling does **not** complete
-locally: Apify cannot reach `localhost` to deliver the webhook. Either poll
-against the deployment, or tunnel:
+Reads work locally against your `DATABASE_URL`. Apify cannot reach `localhost`
+to deliver its callback, so collection does not complete locally. Use
+`npm run poll:local` (it does the callback's work itself), or expose the app with
+a tunnel such as `npx ngrok http 3000` and set `APP_BASE_URL` to the tunnel URL.
 
 ```bash
-npm run poll:local                 # hot tier, all active accounts
-npm run poll:local -- backfill     # one-time history fetch
-npm run poll:local -- hot 5        # cap posts per profile, for cost control
+npm run migrate       # apply the schema
+npm run authcheck     # auth and key-handling assertions
+npm run actorcheck    # both collector adapters (no database needed)
+npm run e2e           # end-to-end suites against an embedded Postgres
+npx tsc --noEmit      # type check
 ```
 
-`poll:local` does the webhook's half of the work itself, so no tunnel is needed.
-If you want to test the real webhook path, expose the app and use `npm run poll`:
-
-```bash
-npx ngrok http 3000
-# set APP_BASE_URL to the ngrok https URL, then:
-npm run poll
-```
-
-```bash
-npm run migrate       # apply schema from the CLI
-npm run actorcheck    # 33 assertions on both actor adapters (no DB needed)
-npm run sqlcheck      # 44 assertions against your real database
-npm run check         # both of the above
-```
-
----
+The end-to-end suites in `scripts/e2e/` use an embedded Postgres and a fake
+collector. They never touch real services.
 
 ## API
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/posts` | GET | feed; `sort`, `competitorId`, `days`, `type`, `outliersOnly`, `watchlistOnly`, `audioId`, `q`, `limit`, `offset` |
+| `/api/posts` | GET | feed; `sort`, `competitorId`, `days`, `type`, `outliersOnly`, `watchlistOnly`, `q`, `limit`, `offset` |
 | `/api/competitors` | GET, POST | list / add |
 | `/api/competitors/[id]` | PATCH, DELETE | pause-resume / remove |
 | `/api/watchlist` | POST | save or update status |
-| `/api/watchlist/[shortcode]` | DELETE | unsave |
-| `/api/stats` | GET | summary, last run, spend |
-| `/api/cron` | GET, POST | trigger a poll *(secret)* |
-| `/api/webhooks/apify` | POST | Apify callback *(secret)* |
-| `/api/admin/migrate` | POST | apply schema *(secret)* |
-
-Force a specific tier: `/api/cron?secret=...&tier=warm`.
-
----
+| `/api/watchlist/[id]` | DELETE | unsave |
+| `/api/collect` | POST | collect for the signed-in user |
+| `/api/stats` | GET | summary, last run |
+| `/api/cron` | GET, POST | safety-net poll for featured accounts *(secret)* |
+| `/api/hooks/scrape` | POST | Apify callback *(single-use nonce)* |
 
 ## Known limitations
 
-- **Thumbnails expire.** Instagram CDN URLs are signed and die after some days,
-  so older cards fall back to a "thumbnail expired" placeholder. The post link
-  always works. To fix properly, copy images to Vercel Blob or S3 during ingest.
-- **No follower counts.** Neither actor returns them, so that column stays
-  null. Add `apify/instagram-profile-scraper` on a daily schedule if you want
-  them. Profile pictures do populate on the `lowcost` actor.
-- **Outlier scores need history.** The median baseline uses up to 30 recent
-  mature reels, so a newly added account gives unreliable scores until its
-  backfill lands. Posts under 24 hours old are deliberately left unscored â€”
-  scoring them against mature posts would brand every new reel a failure.
+- **Thumbnails expire.** Instagram CDN URLs are signed and die after some days.
+  Older cards fall back to a placeholder, and the post link always works.
+- **No follower counts.** Neither collector returns them.
+- **Outlier scores need history.** The median uses up to 30 recent mature reels,
+  so a new account's scores are unreliable until its first fetch lands. Posts
+  under 24 hours old are deliberately left unscored.
 - **Views are plays.** `views` is `videoPlayCount`, matching Instagram's UI.
-  `reach` is the older `videoViewCount`. They differ by 2â€“3Ã—; do not mix them.
-- **Private accounts cannot be tracked.** Public profiles only.
-- **The Apify round trip is untested end to end.** The scrape, normalize and
-  store steps are each verified in isolation, but cron -> Apify -> webhook ->
-  ingest has not been run as one chain (it needs a deployed, publicly reachable
-  URL). Expect to debug the webhook callback on first deploy.
+- **Public accounts only.** Private accounts cannot be tracked.
+- **No payments or email verification yet.** Plans are switched by hand, and
+  signup has no CAPTCHA.
 
-## Verified vs. unverified
+## Contributing
 
-Checked against reality:
+Issues and pull requests are welcome. Please run `npx tsc --noEmit`,
+`npm run authcheck`, `npm run actorcheck`, and `npm run e2e` before opening a
+pull request.
 
-- Apify field names, types and null behaviour, from live `detailedData` runs
-  (`normalizePost` passes 17 assertions against verbatim payloads).
-- `basicData` genuinely lacks all view fields.
-- Handle parsing, including rejecting `/p/` and `/reel/` URLs (11 assertions).
-- `npm run build` and `tsc --noEmit` both clean.
+## License
 
-Not yet exercised:
-
-- Any SQL, including the migration (no Postgres in the build environment).
-- The cron â†’ Apify â†’ webhook â†’ ingest round trip end to end.
-- Telegram and email delivery.
+[MIT](LICENSE) (c) 2026 Ketan Kokane (Star Labs)
